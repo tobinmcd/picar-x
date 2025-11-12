@@ -1,6 +1,14 @@
 from picarx import Picarx
 from time import sleep
-import readchar
+import time
+
+try:
+    import keyboard
+except ImportError as exc:
+    raise SystemExit(
+        "The 'keyboard' package is required for non-blocking key tracking. "
+        "Install it with 'pip install keyboard' (use sudo on the Pi if needed)."
+    ) from exc
 
 manual = """
 Press keys on keyboard to control PiCar-X!
@@ -22,57 +30,106 @@ def show_info():
 
 
 if __name__ == "__main__":
+    CONTROL_KEYS = ("w", "a", "s", "d", "i", "k", "j", "l")
+    DRIVE_SPEED = 80
+    STEER_ANGLE_LIMIT = 30
+    STEER_ANGLE_STEP = 2
+    STEER_UPDATE_INTERVAL = 0.1
+    CAMERA_STEP = 2
+    CAMERA_INTERVAL = 0.1
+    CAMERA_LIMIT = 30
+    LOOP_INTERVAL = 0.05
+
+    def handle_key_event(event, key_state):
+        key_name = (event.name or "").lower()
+        if key_name in key_state:
+            key_state[key_name] = event.event_type == "down"
+
+    px = None
+    key_state = {key: False for key in CONTROL_KEYS}
+    hook = keyboard.hook(lambda event: handle_key_event(event, key_state))
+
     try:
+        px = Picarx()
         pan_angle = 0
         tilt_angle = 0
-        px = Picarx()
+        current_motion = "stop"
+        current_dir_angle = 0
+        last_camera_update = 0.0
+        last_steer_update = 0.0
         show_info()
+
         while True:
-            key = readchar.readkey()
-            key = key.lower()
-            if key in ("wsadikjl"):
-                if "w" == key:
-                    px.set_dir_servo_angle(0)
-                    px.forward(80)
-                if "s" == key:
-                    px.set_dir_servo_angle(0)
-                    px.backward(80)
-                if "a" == key:
-                    px.set_dir_servo_angle(-30)
-                    px.forward(80)
-                if "d" == key:
-                    px.set_dir_servo_angle(30)
-                    px.forward(80)
-                if "i" == key:
-                    tilt_angle += 5
-                    if tilt_angle > 30:
-                        tilt_angle = 30
-                if "k" == key:
-                    tilt_angle -= 5
-                    if tilt_angle < -30:
-                        tilt_angle = -30
-                if "l" == key:
-                    pan_angle += 5
-                    if pan_angle > 30:
-                        pan_angle = 30
-                if "j" == key:
-                    pan_angle -= 5
-                    if pan_angle < -30:
-                        pan_angle = -30
+            now = time.time()
+            desired_motion = "stop"
+            if key_state["w"] and not key_state["s"]:
+                desired_motion = "forward"
+            elif key_state["s"] and not key_state["w"]:
+                desired_motion = "backward"
 
-                px.set_cam_tilt_angle(tilt_angle)
-                px.set_cam_pan_angle(pan_angle)
-                show_info()
-                sleep(0.5)
-                px.forward(0)
+            if desired_motion != current_motion:
+                if desired_motion == "forward":
+                    px.forward(DRIVE_SPEED)
+                elif desired_motion == "backward":
+                    px.backward(DRIVE_SPEED)
+                else:
+                    px.stop()
+                current_motion = desired_motion
 
-            elif key == readchar.key.CTRL_C:
-                print("\n Quit")
-                break
+            if now - last_steer_update >= STEER_UPDATE_INTERVAL:
+                desired_dir_angle = current_dir_angle
+                if key_state["a"] and not key_state["d"]:
+                    desired_dir_angle = max(
+                        desired_dir_angle - STEER_ANGLE_STEP, -STEER_ANGLE_LIMIT
+                    )
+                elif key_state["d"] and not key_state["a"]:
+                    desired_dir_angle = min(
+                        desired_dir_angle + STEER_ANGLE_STEP, STEER_ANGLE_LIMIT
+                    )
 
+                if desired_dir_angle != current_dir_angle:
+                    px.set_dir_servo_angle(desired_dir_angle)
+                    current_dir_angle = desired_dir_angle
+
+                last_steer_update = now
+
+            if now - last_camera_update >= CAMERA_INTERVAL:
+                new_tilt = tilt_angle
+                new_pan = pan_angle
+
+                if key_state["i"] and not key_state["k"]:
+                    new_tilt = min(tilt_angle + CAMERA_STEP, CAMERA_LIMIT)
+                elif key_state["k"] and not key_state["i"]:
+                    new_tilt = max(tilt_angle - CAMERA_STEP, -CAMERA_LIMIT)
+
+                if key_state["l"] and not key_state["j"]:
+                    new_pan = min(pan_angle + CAMERA_STEP, CAMERA_LIMIT)
+                elif key_state["j"] and not key_state["l"]:
+                    new_pan = max(pan_angle - CAMERA_STEP, -CAMERA_LIMIT)
+
+                camera_changed = False
+                if new_tilt != tilt_angle:
+                    tilt_angle = new_tilt
+                    px.set_cam_tilt_angle(tilt_angle)
+                    camera_changed = True
+
+                if new_pan != pan_angle:
+                    pan_angle = new_pan
+                    px.set_cam_pan_angle(pan_angle)
+                    camera_changed = True
+
+                if camera_changed:
+                    last_camera_update = now
+
+            sleep(LOOP_INTERVAL)
+
+    except KeyboardInterrupt:
+        print("\n Quit")
     finally:
-        px.set_cam_tilt_angle(0)
-        px.set_cam_pan_angle(0)
-        px.set_dir_servo_angle(0)
-        px.stop()
-        sleep(0.2)
+        keyboard.unhook(hook)
+        if px is not None:
+            px.set_cam_tilt_angle(0)
+            px.set_cam_pan_angle(0)
+            px.set_dir_servo_angle(0)
+            px.stop()
+            sleep(0.2)

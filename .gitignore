@@ -3,3 +3,4 @@ build/*
 bk/
 *secret*
 picar_x.egg-info/
+.pycache/
