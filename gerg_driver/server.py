@@ -6,7 +6,8 @@ import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from car_controller import CarController, Picarx  # type: ignore
+from car_controller import CarController, Picarx
+
 
 app = FastAPI()
 

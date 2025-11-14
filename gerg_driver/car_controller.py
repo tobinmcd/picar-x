@@ -2,28 +2,35 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, Set
+from typing import Set, Union
 
 try:
-    from picarx import Picarx
+    from picarx import Picarx as HardwarePicarx
+    Picarx = HardwarePicarx
 except ImportError:  # Running on a dev machine without hardware
-    class Picarx:  # type: ignore
+    class MockPicarx:
         def forward(self, speed: int): print(f"[mock] forward {speed}")
         def backward(self, speed: int): print(f"[mock] backward {speed}")
         def stop(self): print("[mock] stop")
         def set_dir_servo_angle(self, angle: int): print(f"[mock] dir_servo {angle}")
         def set_cam_tilt_angle(self, angle: int): print(f"[mock] tilt {angle}")
         def set_cam_pan_angle(self, angle: int): print(f"[mock] pan {angle}")
-
+    Picarx = MockPicarx
 
 @dataclass
 class CarController:
     """
     Stateless-ish adapter that lets the web layer say:
-      controller.on_key_event(key, pressed)
+        controller.on_key_event(key, pressed)
     and we turn that into Picarx calls.
+
+    Parameters
+    ----------
+    px:
+        Initialized ``Picarx`` (or the mock) that actually talks to the hardware.
     """
-    px: Optional[Picarx] = None
+    px: Union[HardwarePicarx, MockPicarx]
+
     speed: int = 20         # tune this
     turn_angle: int = 35    # steering servo angle
     active_keys: Set[str] = field(default_factory=set)
