@@ -7,19 +7,18 @@ build-backend = "setuptools.build_meta"
 name = "picar-x"
 authors = [
   { name="sunfounder", email="service@sunfounder.com" },
+  { name="Tobin McD", email="138074176+tobinmcd@users.noreply.github.com" },
 ]
-description = "Picar X Python library for Raspberry Pi"
+description = "Picar-X Projects"
 readme = "README.md"
-requires-python = ">=3.7"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
-    "Operating System :: POSIX :: Linux",
-]
+requires-python = ">=3.13"
 keywords = ["picar-x", "sunfounder"]
 dynamic = ["version"]
 
 dependencies = [
+    "fastapi[standard]>=0.121.2",
+    "keyboard>=0.13.5",
+    "uvicorn>=0.22.0",
 ]
 
 [project.urls]

@@ -4,3 +4,4 @@ bk/
 *secret*
 picar_x.egg-info/
 .pycache/
+__pycache__/
