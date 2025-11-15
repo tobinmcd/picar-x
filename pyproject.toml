@@ -21,6 +21,9 @@ dependencies = [
     "uvicorn>=0.22.0",
 ]
 
+[project.scripts]
+picarx-serve = "gerg_driver.server:main"
+
 [project.urls]
 Repository = "https://github.com/sunfounder/picar-x"
 Issues = "https://github.com/sunfounder/picar-x/issues"
@@ -28,9 +31,8 @@ Issues = "https://github.com/sunfounder/picar-x/issues"
 [tool.setuptools]
 packages = [
   "picarx",
+  "gerg_driver",
 ]
 
 [tool.setuptools.dynamic]
 version = {attr = "picarx.version.__version__"}
-
-

@@ -5,10 +5,15 @@ import asyncio
 import json
 from contextlib import suppress
 
+import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from car_controller import CarController, Picarx
+try:
+    from car_controller import CarController, Picarx
+except ModuleNotFoundError:
+    # Fallback when imported as part of the gerg_driver package.
+    from gerg_driver.car_controller import CarController, Picarx
 
 
 app = FastAPI()
@@ -17,7 +22,7 @@ app = FastAPI()
 # the mock in car_controller will be used instead.
 px = Picarx()
 controller = CarController(px=px)
-TICK_INTERVAL = 0.05  # seconds; tune for smooth camera motion
+TICK_INTERVAL = 0.03  # shorter interval to keep camera motion smooth
 _tick_task: asyncio.Task | None = None
 
 HTML_PAGE = """
@@ -40,6 +45,13 @@ HTML_PAGE = """
           <span class="key-hint">S</span>
           <span class="key-hint">D</span>
       or arrow keys to drive the robot.
+    </p>
+    <p>
+      Aim the camera with
+      <span class="key-hint">I</span>
+      <span class="key-hint">J</span>
+      <span class="key-hint">K</span>
+      <span class="key-hint">L</span>.
     </p>
     <p id="status">Connecting...</p>
 
@@ -78,7 +90,11 @@ HTML_PAGE = """
               ? key.toLowerCase()
               : key;
 
-        const relevantKeys = ["w","a","s","d","arrowup","arrowdown","arrowleft","arrowright"];
+        const relevantKeys = [
+          "w","a","s","d",
+          "i","j","k","l",
+          "arrowup","arrowdown","arrowleft","arrowright"
+        ];
         if (!relevantKeys.includes(normalized)) {
           return;
         }
@@ -158,3 +174,8 @@ async def shutdown_event():
             await _tick_task
         _tick_task = None
     controller.shutdown()
+
+
+def main() -> None:
+    """Entry point used by `picarx-serve` console script."""
+    uvicorn.run("gerg_driver.server:app", host="0.0.0.0", port=8000)

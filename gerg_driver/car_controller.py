@@ -31,11 +31,10 @@ class CarController:
     """
     px: Union[HardwarePicarx, MockPicarx]
 
-    speed: int = 20         # tune this
-    turn_angle: int = 35    # steering servo angle
-    camera_step: int = 2
+    speed: int = 100         # tune this
+    turn_angle: int = 30    # steering servo angle
+    camera_step: int = 1
     camera_limit: int = 30
-    camera_return_rate: int = 2
     active_keys: Set[str] = field(default_factory=set)
     forward_keys: Set[str] = field(default_factory=lambda: {"w", "arrowup"})
     back_keys: Set[str]    = field(default_factory=lambda: {"s", "arrowdown"})
@@ -75,7 +74,7 @@ class CarController:
         self._update_camera(px)
 
     def tick(self) -> None:
-        """Call periodically to keep the camera moving/centering while keys are held."""
+        """Call periodically to keep the camera moving while keys are held."""
         px = self._require_px(log=False)
         if px is None:
             return
@@ -111,7 +110,7 @@ class CarController:
             px.set_dir_servo_angle(0)
 
     def _update_camera(self, px) -> None:
-        """Incrementally apply camera movement and auto-center behavior."""
+        """Incrementally apply camera movement."""
         tilt_up = bool(self.active_keys & self.camera_up_keys)
         tilt_down = bool(self.active_keys & self.camera_down_keys)
         pan_right = bool(self.active_keys & self.camera_right_keys)
@@ -137,7 +136,7 @@ class CarController:
             return self._clamp_camera_angle(current + self.camera_step)
         if negative and not positive:
             return self._clamp_camera_angle(current - self.camera_step)
-        return self._approach_zero(current)
+        return current
 
     def _clamp_camera_angle(self, value: int) -> int:
         limit = self.camera_limit
@@ -145,13 +144,6 @@ class CarController:
             return limit
         if value < -limit:
             return -limit
-        return value
-
-    def _approach_zero(self, value: int) -> int:
-        if value > 0:
-            return max(0, value - self.camera_return_rate)
-        if value < 0:
-            return min(0, value + self.camera_return_rate)
         return value
 
     def shutdown(self) -> None:
