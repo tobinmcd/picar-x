@@ -1,7 +1,9 @@
 # server.py
 from __future__ import annotations
 
+import asyncio
 import json
+from contextlib import suppress
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -15,6 +17,8 @@ app = FastAPI()
 # the mock in car_controller will be used instead.
 px = Picarx()
 controller = CarController(px=px)
+TICK_INTERVAL = 0.05  # seconds; tune for smooth camera motion
+_tick_task: asyncio.Task | None = None
 
 HTML_PAGE = """
 <!doctype html>
@@ -129,6 +133,28 @@ async def websocket_keys(websocket: WebSocket):
         controller.shutdown()
 
 
+async def _tick_loop():
+    try:
+        while True:
+            controller.tick()
+            await asyncio.sleep(TICK_INTERVAL)
+    except asyncio.CancelledError:
+        pass
+
+
+@app.on_event("startup")
+async def startup_event():
+    global _tick_task
+    loop = asyncio.get_running_loop()
+    _tick_task = loop.create_task(_tick_loop())
+
+
 @app.on_event("shutdown")
-def shutdown_event():
+async def shutdown_event():
+    global _tick_task
+    if _tick_task is not None:
+        _tick_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await _tick_task
+        _tick_task = None
     controller.shutdown()

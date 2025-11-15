@@ -33,7 +33,20 @@ class CarController:
 
     speed: int = 20         # tune this
     turn_angle: int = 35    # steering servo angle
+    camera_step: int = 2
+    camera_limit: int = 30
+    camera_return_rate: int = 2
     active_keys: Set[str] = field(default_factory=set)
+    forward_keys: Set[str] = field(default_factory=lambda: {"w", "arrowup"})
+    back_keys: Set[str]    = field(default_factory=lambda: {"s", "arrowdown"})
+    left_keys: Set[str]    = field(default_factory=lambda: {"a", "arrowleft"})
+    right_keys: Set[str]   = field(default_factory=lambda: {"d", "arrowright"})
+    camera_up_keys: Set[str]    = field(default_factory=lambda: {"i"})
+    camera_down_keys: Set[str]  = field(default_factory=lambda: {"k"})
+    camera_left_keys: Set[str]  = field(default_factory=lambda: {"j"})
+    camera_right_keys: Set[str] = field(default_factory=lambda: {"l"})
+    pan_angle: int = 0
+    tilt_angle: int = 0
 
     def on_key_event(self, key: str, pressed: bool) -> None:
         """Handle a key down/up event coming from the web client."""
@@ -54,26 +67,33 @@ class CarController:
 
     def _apply_motion(self) -> None:
         """Compute robot motion from the current active_keys."""
-        px = self.px
+        px = self._require_px()
         if px is None:
-            # Dev mode: just log
-            print(f"[CarController] active_keys={self.active_keys}")
             return
 
-        # Allow both WASD and arrow keys
-        forward_keys = {"w", "arrowup"}
-        back_keys    = {"s", "arrowdown"}
-        left_keys    = {"a", "arrowleft"}
-        right_keys   = {"d", "arrowright"}
+        self._apply_drive(px)
+        self._update_camera(px)
 
-        moving_forward = bool(self.active_keys & forward_keys)
-        moving_back    = bool(self.active_keys & back_keys)
-        turning_left   = bool(self.active_keys & left_keys)
-        turning_right  = bool(self.active_keys & right_keys)
+    def tick(self) -> None:
+        """Call periodically to keep the camera moving/centering while keys are held."""
+        px = self._require_px(log=False)
+        if px is None:
+            return
+        self._update_camera(px)
+
+    def _require_px(self, *, log: bool = True):
+        px = self.px
+        if px is None and log:
+            print(f"[CarController] active_keys={self.active_keys}")
+        return px
+
+    def _apply_drive(self, px) -> None:
+        moving_forward = bool(self.active_keys & self.forward_keys)
+        moving_back    = bool(self.active_keys & self.back_keys)
+        turning_left   = bool(self.active_keys & self.left_keys)
+        turning_right  = bool(self.active_keys & self.right_keys)
 
         # --- Drive direction ---
-
-        # If no movement keys, or conflicting (forward+back), then stop.
         if (not moving_forward and not moving_back) or (moving_forward and moving_back):
             px.stop()
         else:
@@ -83,7 +103,6 @@ class CarController:
                 px.backward(self.speed)
 
         # --- Steering servo ---
-
         if turning_left and not turning_right:
             px.set_dir_servo_angle(-self.turn_angle)
         elif turning_right and not turning_left:
@@ -91,8 +110,49 @@ class CarController:
         else:
             px.set_dir_servo_angle(0)
 
-        # If you had i/j/k/l controlling the camera in vroomvroomcar.py,
-        # you can add that here too (e.g. pan/tilt based on extra keys).
+    def _update_camera(self, px) -> None:
+        """Incrementally apply camera movement and auto-center behavior."""
+        tilt_up = bool(self.active_keys & self.camera_up_keys)
+        tilt_down = bool(self.active_keys & self.camera_down_keys)
+        pan_right = bool(self.active_keys & self.camera_right_keys)
+        pan_left = bool(self.active_keys & self.camera_left_keys)
+
+        new_tilt = self._next_camera_angle(
+            self.tilt_angle, positive=tilt_up, negative=tilt_down
+        )
+        new_pan = self._next_camera_angle(
+            self.pan_angle, positive=pan_right, negative=pan_left
+        )
+
+        if new_tilt != self.tilt_angle:
+            self.tilt_angle = new_tilt
+            px.set_cam_tilt_angle(new_tilt)
+
+        if new_pan != self.pan_angle:
+            self.pan_angle = new_pan
+            px.set_cam_pan_angle(new_pan)
+
+    def _next_camera_angle(self, current: int, *, positive: bool, negative: bool) -> int:
+        if positive and not negative:
+            return self._clamp_camera_angle(current + self.camera_step)
+        if negative and not positive:
+            return self._clamp_camera_angle(current - self.camera_step)
+        return self._approach_zero(current)
+
+    def _clamp_camera_angle(self, value: int) -> int:
+        limit = self.camera_limit
+        if value > limit:
+            return limit
+        if value < -limit:
+            return -limit
+        return value
+
+    def _approach_zero(self, value: int) -> int:
+        if value > 0:
+            return max(0, value - self.camera_return_rate)
+        if value < 0:
+            return min(0, value + self.camera_return_rate)
+        return value
 
     def shutdown(self) -> None:
         """Reset the robot to a safe neutral state."""
@@ -101,3 +161,5 @@ class CarController:
             self.px.set_cam_pan_angle(0)
             self.px.set_dir_servo_angle(0)
             self.px.stop()
+        self.pan_angle = 0
+        self.tilt_angle = 0
