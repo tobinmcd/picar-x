@@ -6,16 +6,31 @@ from typing import Set, Union
 
 try:
     from picarx import Picarx as HardwarePicarx
+
     Picarx = HardwarePicarx
 except ImportError:  # Running on a dev machine without hardware
+
     class MockPicarx:
-        def forward(self, speed: int): print(f"[mock] forward {speed}")
-        def backward(self, speed: int): print(f"[mock] backward {speed}")
-        def stop(self): print("[mock] stop")
-        def set_dir_servo_angle(self, angle: int): print(f"[mock] dir_servo {angle}")
-        def set_cam_tilt_angle(self, angle: int): print(f"[mock] tilt {angle}")
-        def set_cam_pan_angle(self, angle: int): print(f"[mock] pan {angle}")
+        def forward(self, speed: int):
+            print(f"[mock] forward {speed}")
+
+        def backward(self, speed: int):
+            print(f"[mock] backward {speed}")
+
+        def stop(self):
+            print("[mock] stop")
+
+        def set_dir_servo_angle(self, angle: int):
+            print(f"[mock] dir_servo {angle}")
+
+        def set_cam_tilt_angle(self, angle: int):
+            print(f"[mock] tilt {angle}")
+
+        def set_cam_pan_angle(self, angle: int):
+            print(f"[mock] pan {angle}")
+
     Picarx = MockPicarx
+
 
 @dataclass
 class CarController:
@@ -29,27 +44,33 @@ class CarController:
     px:
         Initialized ``Picarx`` (or the mock) that actually talks to the hardware.
     """
+
     px: Union[HardwarePicarx, MockPicarx]
 
-    speed: int = 100         # tune this
-    turn_angle: int = 30    # steering servo angle
+    speed: int = 100  # tune this
+    turn_angle: int = 20  # steering servo angle
     camera_step: int = 1
     camera_limit: int = 30
     active_keys: Set[str] = field(default_factory=set)
     forward_keys: Set[str] = field(default_factory=lambda: {"w", "arrowup"})
-    back_keys: Set[str]    = field(default_factory=lambda: {"s", "arrowdown"})
-    left_keys: Set[str]    = field(default_factory=lambda: {"a", "arrowleft"})
-    right_keys: Set[str]   = field(default_factory=lambda: {"d", "arrowright"})
-    camera_up_keys: Set[str]    = field(default_factory=lambda: {"i"})
-    camera_down_keys: Set[str]  = field(default_factory=lambda: {"k"})
-    camera_left_keys: Set[str]  = field(default_factory=lambda: {"j"})
+    back_keys: Set[str] = field(default_factory=lambda: {"s", "arrowdown"})
+    left_keys: Set[str] = field(default_factory=lambda: {"a", "arrowleft"})
+    right_keys: Set[str] = field(default_factory=lambda: {"d", "arrowright"})
+    camera_up_keys: Set[str] = field(default_factory=lambda: {"i"})
+    camera_down_keys: Set[str] = field(default_factory=lambda: {"k"})
+    camera_left_keys: Set[str] = field(default_factory=lambda: {"j"})
     camera_right_keys: Set[str] = field(default_factory=lambda: {"l"})
+    camera_center_keys: Set[str] = field(default_factory=lambda: {"center-camera"})
     pan_angle: int = 0
     tilt_angle: int = 0
 
     def on_key_event(self, key: str, pressed: bool) -> None:
         """Handle a key down/up event coming from the web client."""
         k = key.lower()
+        if k in self.camera_center_keys:
+            if pressed:
+                self.recenter_camera()
+            return
         if pressed:
             self.active_keys.add(k)
         else:
@@ -88,9 +109,9 @@ class CarController:
 
     def _apply_drive(self, px) -> None:
         moving_forward = bool(self.active_keys & self.forward_keys)
-        moving_back    = bool(self.active_keys & self.back_keys)
-        turning_left   = bool(self.active_keys & self.left_keys)
-        turning_right  = bool(self.active_keys & self.right_keys)
+        moving_back = bool(self.active_keys & self.back_keys)
+        turning_left = bool(self.active_keys & self.left_keys)
+        turning_right = bool(self.active_keys & self.right_keys)
 
         # --- Drive direction ---
         if (not moving_forward and not moving_back) or (moving_forward and moving_back):
@@ -131,7 +152,9 @@ class CarController:
             self.pan_angle = new_pan
             px.set_cam_pan_angle(new_pan)
 
-    def _next_camera_angle(self, current: int, *, positive: bool, negative: bool) -> int:
+    def _next_camera_angle(
+        self, current: int, *, positive: bool, negative: bool
+    ) -> int:
         if positive and not negative:
             return self._clamp_camera_angle(current + self.camera_step)
         if negative and not positive:
@@ -145,6 +168,18 @@ class CarController:
         if value < -limit:
             return -limit
         return value
+
+    def recenter_camera(self) -> None:
+        """Snap the camera back to the neutral pan/tilt position."""
+        px = self._require_px()
+        if px is None:
+            self.pan_angle = 0
+            self.tilt_angle = 0
+            return
+        self.pan_angle = 0
+        self.tilt_angle = 0
+        px.set_cam_pan_angle(0)
+        px.set_cam_tilt_angle(0)
 
     def shutdown(self) -> None:
         """Reset the robot to a safe neutral state."""

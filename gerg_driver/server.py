@@ -1,19 +1,29 @@
 # server.py
 from __future__ import annotations
 
+import argparse
 import asyncio
+import io
 import json
+import threading
+import time
 from contextlib import suppress
+from importlib import resources
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 try:
     from car_controller import CarController, Picarx
 except ModuleNotFoundError:
     # Fallback when imported as part of the gerg_driver package.
     from gerg_driver.car_controller import CarController, Picarx
+
+try:
+    from picamera2 import Picamera2
+except ImportError:
+    Picamera2 = None
 
 
 app = FastAPI()
@@ -25,109 +35,98 @@ controller = CarController(px=px)
 TICK_INTERVAL = 0.03  # shorter interval to keep camera motion smooth
 _tick_task: asyncio.Task | None = None
 
-HTML_PAGE = """
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>PiCar-X Controller</title>
-    <style>
-      body { font-family: sans-serif; padding: 1rem; }
-      #status { margin-top: 0.5rem; font-size: 0.9rem; }
-      .key-hint { font-family: monospace; padding: 0.1rem 0.3rem; border: 1px solid #ccc; border-radius: 4px; }
-    </style>
-  </head>
-  <body>
-    <h1>PiCar-X Controller</h1>
-    <p>
-      Use <span class="key-hint">W</span>
-          <span class="key-hint">A</span>
-          <span class="key-hint">S</span>
-          <span class="key-hint">D</span>
-      or arrow keys to drive the robot.
-    </p>
-    <p>
-      Aim the camera with
-      <span class="key-hint">I</span>
-      <span class="key-hint">J</span>
-      <span class="key-hint">K</span>
-      <span class="key-hint">L</span>.
-    </p>
-    <p id="status">Connecting...</p>
+class CameraStream:
+    """Very small helper to expose the Pi camera as MJPEG frames."""
 
-    <script>
-      const statusEl = document.getElementById("status");
-      const protocol = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${protocol}://${location.host}/ws/keys`);
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._picam2: Picamera2 | None = None
+        self.available = False
 
-      ws.onopen = () => {
-        statusEl.textContent = "Connected";
-      };
+        if Picamera2 is None:
+            print("[CameraStream] picamera2 not installed; camera feed disabled.")
+            return
 
-      ws.onclose = () => {
-        statusEl.textContent = "Disconnected";
-      };
+        try:
+            picam2 = Picamera2()
+            config = picam2.create_video_configuration(main={"size": (640, 480)})
+            picam2.configure(config)
+            picam2.start()
+            self._picam2 = picam2
+            self.available = True
+            print("[CameraStream] Camera ready at 640x480.")
+        except Exception as exc:  # pragma: no cover - heavily hardware dependent
+            print(f"[CameraStream] Failed to start camera: {exc}")
+            self._picam2 = None
+            self.available = False
 
-      ws.onerror = (event) => {
-        console.error("WebSocket error:", event);
-        statusEl.textContent = "Error (see console)";
-      };
+    def close(self) -> None:
+        picam2 = self._picam2
+        if picam2 is not None:
+            try:
+                picam2.stop()
+            except Exception:
+                pass
+            picam2.close()
+        self._picam2 = None
+        self.available = False
 
-      ws.onmessage = (event) => {
-        // For future telemetry; for now just log
-        console.log("From server:", event.data);
-      };
+    def get_frame(self) -> bytes | None:
+        picam2 = self._picam2
+        if not self.available or picam2 is None:
+            return None
+        with self._lock:
+            buffer = io.BytesIO()
+            try:
+                picam2.capture_file(buffer, format="jpeg")
+            except Exception as exc:  # pragma: no cover - hardware failure path
+                print(f"[CameraStream] capture failed: {exc}")
+                return None
+            return buffer.getvalue()
 
-      // Track which keys we've reported as pressed to avoid duplicates.
-      const pressed = new Set();
+    def stream(self):
+        boundary = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+        while self.available:
+            frame = self.get_frame()
+            if frame is None:
+                time.sleep(0.25)
+                continue
+            yield boundary + frame + b"\r\n"
 
-      function handleKey(event, isDown) {
-        const key = event.key;                      // e.g. "w", "ArrowUp"
-        const normalized =
-          key.length === 1
-            ? key.toLowerCase()
-            : key.startsWith("Arrow")
-              ? key.toLowerCase()
-              : key;
 
-        const relevantKeys = [
-          "w","a","s","d",
-          "i","j","k","l",
-          "arrowup","arrowdown","arrowleft","arrowright"
-        ];
-        if (!relevantKeys.includes(normalized)) {
-          return;
-        }
+camera_stream = CameraStream()
 
-        event.preventDefault();
 
-        if (isDown) {
-          if (pressed.has(key)) {
-            return;  // already down from our POV
-          }
-          pressed.add(key);
-        } else {
-          if (!pressed.has(key)) {
-            return;  // nothing to release
-          }
-          pressed.delete(key);
-        }
+def _load_html_template() -> str:
+    template_path = resources.files("gerg_driver").joinpath("templates/index.html")
+    try:
+        return template_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:  # pragma: no cover - packaging issue
+        raise RuntimeError(
+            "Missing PiCar-X controller template; reinstall picar-x."
+        ) from exc
 
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ key: normalized, pressed: isDown }));
-        }
-      }
 
-      document.addEventListener("keydown", (event) => handleKey(event, true));
-      document.addEventListener("keyup", (event)  => handleKey(event, false));
-    </script>
-  </body>
-</html>
-"""
+HTML_PAGE = _load_html_template()
 
 @app.get("/")
 async def index():
     return HTMLResponse(HTML_PAGE)
+
+
+@app.get("/camera/status")
+async def camera_status():
+    return {"available": camera_stream.available}
+
+
+@app.get("/video")
+async def video_feed():
+    if not camera_stream.available:
+        raise HTTPException(status_code=503, detail="Camera unavailable")
+    return StreamingResponse(
+        camera_stream.stream(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
 
 
 @app.websocket("/ws/keys")
@@ -174,8 +173,22 @@ async def shutdown_event():
             await _tick_task
         _tick_task = None
     controller.shutdown()
+    camera_stream.close()
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     """Entry point used by `picarx-serve` console script."""
-    uvicorn.run("gerg_driver.server:app", host="0.0.0.0", port=8000)
+    parser = argparse.ArgumentParser(description="Run the PiCar-X control server.")
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Interface to bind (default: all interfaces)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="TCP port to serve on (default: 8000)",
+    )
+    args = parser.parse_args(argv)
+    uvicorn.run("gerg_driver.server:app", host=args.host, port=args.port)

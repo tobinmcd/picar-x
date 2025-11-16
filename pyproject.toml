@@ -34,5 +34,8 @@ packages = [
   "gerg_driver",
 ]
 
+[tool.setuptools.package-data]
+"gerg_driver" = ["templates/*.html"]
+
 [tool.setuptools.dynamic]
 version = {attr = "picarx.version.__version__"}

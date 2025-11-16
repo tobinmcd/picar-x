@@ -1,0 +1,157 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>PiCar-X Controller</title>
+    <style>
+      body { font-family: sans-serif; padding: 1rem; background: #f8f8f8; }
+      #status { margin-top: 0.5rem; font-size: 0.9rem; }
+      .key-hint { font-family: monospace; padding: 0.1rem 0.3rem; border: 1px solid #ccc; border-radius: 4px; }
+      .control-button { margin: 0.5rem 0; padding: 0.45rem 0.9rem; font-size: 1rem; border-radius: 6px; border: 1px solid #666; background: #fff; cursor: pointer; }
+      .control-button:disabled { opacity: 0.6; cursor: not-allowed; }
+      .camera-container { margin-top: 1.5rem; }
+      .camera-frame { background: #000; display: inline-block; border: 2px solid #222; border-radius: 8px; padding: 0.25rem; }
+      .camera-frame img { display: block; width: 480px; max-width: 90vw; border-radius: 4px; }
+      .status-line { font-size: 0.9rem; color: #444; }
+    </style>
+  </head>
+  <body>
+    <h1>PiCar-X Controller</h1>
+    <p>
+      Use <span class="key-hint">W</span>
+          <span class="key-hint">A</span>
+          <span class="key-hint">S</span>
+          <span class="key-hint">D</span>
+      or arrow keys to drive the robot.
+    </p>
+    <p>
+      Aim the camera with
+      <span class="key-hint">I</span>
+      <span class="key-hint">J</span>
+      <span class="key-hint">K</span>
+      <span class="key-hint">L</span>.
+    </p>
+    <button id="recenter-camera" class="control-button" type="button" disabled>
+      Recenter camera
+    </button>
+    <p id="status">Connecting...</p>
+    <div class="camera-container">
+      <h2>Live camera</h2>
+      <div class="camera-frame">
+        <img id="camera-feed" alt="PiCar-X camera feed" aria-describedby="camera-status" />
+      </div>
+      <p id="camera-status" class="status-line">Camera: checking availability...</p>
+    </div>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const recenterButton = document.getElementById("recenter-camera");
+      const protocol = location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${protocol}://${location.host}/ws/keys`);
+
+      ws.onopen = () => {
+        statusEl.textContent = "Connected";
+        recenterButton.disabled = false;
+      };
+
+      ws.onclose = () => {
+        statusEl.textContent = "Disconnected";
+        recenterButton.disabled = true;
+      };
+
+      ws.onerror = (event) => {
+        console.error("WebSocket error:", event);
+        statusEl.textContent = "Error (see console)";
+        recenterButton.disabled = true;
+      };
+
+      ws.onmessage = (event) => {
+        // For future telemetry; for now just log
+        console.log("From server:", event.data);
+      };
+
+      // Track which keys we've reported as pressed to avoid duplicates.
+      const pressed = new Set();
+
+      function handleKey(event, isDown) {
+        const key = event.key;                      // e.g. "w", "ArrowUp"
+        const normalized =
+          key.length === 1
+            ? key.toLowerCase()
+            : key.startsWith("Arrow")
+              ? key.toLowerCase()
+              : key;
+
+        const relevantKeys = [
+          "w","a","s","d",
+          "i","j","k","l",
+          "arrowup","arrowdown","arrowleft","arrowright"
+        ];
+        if (!relevantKeys.includes(normalized)) {
+          return;
+        }
+
+        event.preventDefault();
+
+        if (isDown) {
+          if (pressed.has(key)) {
+            return;  // already down from our POV
+          }
+          pressed.add(key);
+        } else {
+          if (!pressed.has(key)) {
+            return;  // nothing to release
+          }
+          pressed.delete(key);
+        }
+
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ key: normalized, pressed: isDown }));
+        }
+      }
+
+      document.addEventListener("keydown", (event) => handleKey(event, true));
+      document.addEventListener("keyup", (event)  => handleKey(event, false));
+      recenterButton.addEventListener("click", () => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ key: "center-camera", pressed: true }));
+        }
+      });
+
+      const cameraStatusEl = document.getElementById("camera-status");
+      const cameraImg = document.getElementById("camera-feed");
+      let cameraStreamNonce = 0;
+
+      function startCameraStream() {
+        fetch("/camera/status")
+          .then((response) => response.json())
+          .then(({ available }) => {
+            if (!available) {
+              cameraStatusEl.textContent = "Camera unavailable on this device. Retrying...";
+              cameraImg.style.display = "none";
+              setTimeout(startCameraStream, 5000);
+              return;
+            }
+            cameraImg.style.display = "block";
+            cameraStreamNonce += 1;
+            cameraImg.src = `/video?stream=${cameraStreamNonce}`;
+            cameraStatusEl.textContent = "Camera streaming...";
+          })
+          .catch((error) => {
+            console.error("Camera status error:", error);
+            cameraStatusEl.textContent = "Unable to reach camera status. Retrying...";
+            cameraImg.style.display = "none";
+            setTimeout(startCameraStream, 5000);
+          });
+      }
+
+      cameraImg.addEventListener("error", () => {
+        cameraStatusEl.textContent = "Camera disconnected, attempting to reconnect...";
+        cameraImg.style.display = "none";
+        setTimeout(startCameraStream, 2000);
+      });
+
+      startCameraStream();
+    </script>
+  </body>
+</html>
