@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import io
 import json
+import signal
 import threading
 import time
 from contextlib import suppress
@@ -93,6 +94,14 @@ class CameraStream:
                 continue
             yield boundary + frame + b"\r\n"
 
+class SafeStreamingResponse(StreamingResponse):
+    async def listen_for_disconnect(self, receive) -> None:
+        try:
+            await super().listen_for_disconnect(receive)
+        except asyncio.CancelledError:
+            # Normal during shutdown or disconnects; avoid noisy tracebacks.
+            return
+
 
 camera_stream = CameraStream()
 
@@ -123,7 +132,7 @@ async def camera_status():
 async def video_feed():
     if not camera_stream.available:
         raise HTTPException(status_code=503, detail="Camera unavailable")
-    return StreamingResponse(
+    return SafeStreamingResponse(
         camera_stream.stream(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
@@ -191,8 +200,24 @@ def main(argv: list[str] | None = None) -> None:
         help="TCP port to serve on (default: 8000)",
     )
     args = parser.parse_args(argv)
+    config = uvicorn.Config(
+        "gerg_driver.server:app",
+        host=args.host,
+        port=args.port,
+    )
+    server = uvicorn.Server(config)
+
+    def _handle_exit(signum, frame) -> None:
+        if server.should_exit:
+            server.force_exit = True
+        else:
+            server.should_exit = True
+
+    server.install_signal_handlers = False
+    signal.signal(signal.SIGINT, _handle_exit)
+    signal.signal(signal.SIGTERM, _handle_exit)
     try:
-        uvicorn.run("gerg_driver.server:app", host=args.host, port=args.port)
-    except KeyboardInterrupt:
-        # Allow CTRL+C to exit cleanly without a traceback.
-        return
+        server.run()
+    finally:
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
