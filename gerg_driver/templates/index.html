@@ -10,8 +10,8 @@
       .control-button { margin: 0.5rem 0; padding: 0.45rem 0.9rem; font-size: 1rem; border-radius: 6px; border: 1px solid #666; background: #fff; cursor: pointer; }
       .control-button:disabled { opacity: 0.6; cursor: not-allowed; }
       .camera-container { margin-top: 1.5rem; }
-      .camera-frame { background: #000; display: inline-block; border: 2px solid #222; border-radius: 8px; padding: 0.25rem; }
-      .camera-frame img { display: block; width: 640px; height: auto; max-width: 90vw; border-radius: 4px; }
+      .camera-frame { background: #000; display: inline-block; border: 2px solid #222; border-radius: 8px; padding: 0.25rem; width: min(640px, 90vw); }
+      .camera-frame img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; border-radius: 4px; }
       .status-line { font-size: 0.9rem; color: #444; }
     </style>
   </head>
@@ -38,7 +38,7 @@
     <div class="camera-container">
       <h2>Live camera</h2>
       <div class="camera-frame">
-        <img id="camera-feed" src="/video?stream=1" width="640" height="480" alt="PiCar-X camera feed" aria-describedby="camera-status" />
+        <img id="camera-feed" src="/video?stream=1" alt="PiCar-X camera feed" aria-describedby="camera-status" />
       </div>
       <p id="camera-status" class="status-line">Camera: checking availability...</p>
     </div>
