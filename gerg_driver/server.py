@@ -96,6 +96,21 @@ class CameraStream:
 camera_stream = CameraStream()
 
 
+class GracefulStreamingResponse(StreamingResponse):
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        except asyncio.CancelledError:
+            # Allow shutdown to cancel streaming without noisy tracebacks.
+            return
+
+    async def listen_for_disconnect(self, receive) -> None:
+        try:
+            await super().listen_for_disconnect(receive)
+        except asyncio.CancelledError:
+            return
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _startup_event()
@@ -146,7 +161,7 @@ async def video_feed():
                 continue
             yield boundary + frame + b"\r\n"
 
-    return StreamingResponse(
+    return GracefulStreamingResponse(
         frame_stream(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
