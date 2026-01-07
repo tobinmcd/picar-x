@@ -121,6 +121,13 @@
       const cameraStatusEl = document.getElementById("camera-status");
       const cameraImg = document.getElementById("camera-feed");
       let cameraStreamNonce = 0;
+      let cameraStreaming = false;
+
+      function setCameraSrc() {
+        cameraStreamNonce += 1;
+        cameraImg.src = "";
+        cameraImg.src = `/video?stream=${cameraStreamNonce}`;
+      }
 
       function startCameraStream() {
         fetch("/camera/status")
@@ -133,8 +140,8 @@
               return;
             }
             cameraImg.style.display = "block";
-            cameraStreamNonce += 1;
-            cameraImg.src = `/video?stream=${cameraStreamNonce}`;
+            cameraStreaming = false;
+            setCameraSrc();
             cameraStatusEl.textContent = "Camera streaming...";
           })
           .catch((error) => {
@@ -145,9 +152,14 @@
           });
       }
 
+      cameraImg.addEventListener("load", () => {
+        cameraStreaming = true;
+        cameraStatusEl.textContent = "Camera streaming...";
+      });
+
       cameraImg.addEventListener("error", () => {
+        cameraStreaming = false;
         cameraStatusEl.textContent = "Camera disconnected, attempting to reconnect...";
-        cameraImg.style.display = "none";
         setTimeout(startCameraStream, 2000);
       });
 
