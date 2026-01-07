@@ -111,6 +111,21 @@ class SafeStreamingResponse(StreamingResponse):
 camera_stream = CameraStream()
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await _startup_event()
+    try:
+        yield
+    except asyncio.CancelledError:
+        # Cancellation during shutdown should not bubble as an error.
+        pass
+    finally:
+        await _shutdown_event()
+
+
+app = FastAPI(lifespan=lifespan)
+
+
 def _load_html_template() -> str:
     template_path = resources.files("gerg_driver").joinpath("templates/index.html")
     try:
@@ -186,20 +201,6 @@ async def _shutdown_event() -> None:
         _tick_task = None
     controller.shutdown()
     camera_stream.close()
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await _startup_event()
-    try:
-        yield
-    except asyncio.CancelledError:
-        # Cancellation during shutdown should not bubble as an error.
-        pass
-    finally:
-        await _shutdown_event()
-
-
-app = FastAPI(lifespan=lifespan)
 
 
 def main(argv: list[str] | None = None) -> None:
