@@ -39,3 +39,6 @@ packages = [
 
 [tool.setuptools.dynamic]
 version = {attr = "picarx.version.__version__"}
+
+[tool.poe.tasks]
+vroom = "python3 custom_gerg_stuff/vroomvroomcar.py"
