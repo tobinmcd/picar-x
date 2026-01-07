@@ -8,7 +8,7 @@ import json
 import signal
 import threading
 import time
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from importlib import resources
 
 import uvicorn
@@ -26,8 +26,6 @@ try:
 except ImportError:
     Picamera2 = None
 
-
-app = FastAPI()
 
 # Instantiate Picarx on the Pi. On your Mac, if you run this there,
 # the mock in car_controller will be used instead.
@@ -102,6 +100,13 @@ class SafeStreamingResponse(StreamingResponse):
             # Normal during shutdown or disconnects; avoid noisy tracebacks.
             return
 
+    async def stream_response(self, send) -> None:
+        try:
+            await super().stream_response(send)
+        except asyncio.CancelledError:
+            # Shutdown can cancel streaming before the final body is sent.
+            return
+
 
 camera_stream = CameraStream()
 
@@ -166,15 +171,13 @@ async def _tick_loop():
         pass
 
 
-@app.on_event("startup")
-async def startup_event():
+async def _startup_event() -> None:
     global _tick_task
     loop = asyncio.get_running_loop()
     _tick_task = loop.create_task(_tick_loop())
 
 
-@app.on_event("shutdown")
-async def shutdown_event():
+async def _shutdown_event() -> None:
     global _tick_task
     if _tick_task is not None:
         _tick_task.cancel()
@@ -183,6 +186,20 @@ async def shutdown_event():
         _tick_task = None
     controller.shutdown()
     camera_stream.close()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await _startup_event()
+    try:
+        yield
+    except asyncio.CancelledError:
+        # Cancellation during shutdown should not bubble as an error.
+        pass
+    finally:
+        await _shutdown_event()
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 def main(argv: list[str] | None = None) -> None:
