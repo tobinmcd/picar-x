@@ -38,7 +38,7 @@
     <div class="camera-container">
       <h2>Live camera</h2>
       <div class="camera-frame">
-        <img id="camera-feed" alt="PiCar-X camera feed" aria-describedby="camera-status" />
+        <img id="camera-feed" src="/video?stream=1" width="640" height="480" alt="PiCar-X camera feed" aria-describedby="camera-status" />
       </div>
       <p id="camera-status" class="status-line">Camera: checking availability...</p>
     </div>
@@ -125,8 +125,7 @@
 
       function setCameraSrc() {
         cameraStreamNonce += 1;
-        cameraImg.src = "";
-        cameraImg.src = `/video?stream=${cameraStreamNonce}`;
+        cameraImg.src = `/video?stream=${cameraStreamNonce}&_=${Date.now()}`;
       }
 
       function startCameraStream() {
