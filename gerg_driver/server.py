@@ -33,6 +33,7 @@ px = Picarx()
 controller = CarController(px=px)
 TICK_INTERVAL = 0.03  # shorter interval to keep camera motion smooth
 _tick_task: asyncio.Task | None = None
+_shutdown_signal = asyncio.Event()
 
 class CameraStream:
     """Very small helper to expose the Pi camera as MJPEG frames."""
@@ -92,22 +93,6 @@ class CameraStream:
                 continue
             yield boundary + frame + b"\r\n"
 
-class SafeStreamingResponse(StreamingResponse):
-    async def listen_for_disconnect(self, receive) -> None:
-        try:
-            await super().listen_for_disconnect(receive)
-        except asyncio.CancelledError:
-            # Normal during shutdown or disconnects; avoid noisy tracebacks.
-            return
-
-    async def stream_response(self, send) -> None:
-        try:
-            await super().stream_response(send)
-        except asyncio.CancelledError:
-            # Shutdown can cancel streaming before the final body is sent.
-            return
-
-
 camera_stream = CameraStream()
 
 
@@ -152,8 +137,17 @@ async def camera_status():
 async def video_feed():
     if not camera_stream.available:
         raise HTTPException(status_code=503, detail="Camera unavailable")
-    return SafeStreamingResponse(
-        camera_stream.stream(),
+    async def frame_stream():
+        boundary = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+        while camera_stream.available and not _shutdown_signal.is_set():
+            frame = await asyncio.to_thread(camera_stream.get_frame)
+            if frame is None:
+                await asyncio.sleep(0.25)
+                continue
+            yield boundary + frame + b"\r\n"
+
+    return StreamingResponse(
+        frame_stream(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
 
@@ -188,12 +182,14 @@ async def _tick_loop():
 
 async def _startup_event() -> None:
     global _tick_task
+    _shutdown_signal.clear()
     loop = asyncio.get_running_loop()
     _tick_task = loop.create_task(_tick_loop())
 
 
 async def _shutdown_event() -> None:
     global _tick_task
+    _shutdown_signal.set()
     if _tick_task is not None:
         _tick_task.cancel()
         with suppress(asyncio.CancelledError):
