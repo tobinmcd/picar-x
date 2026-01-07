@@ -191,4 +191,8 @@ def main(argv: list[str] | None = None) -> None:
         help="TCP port to serve on (default: 8000)",
     )
     args = parser.parse_args(argv)
-    uvicorn.run("gerg_driver.server:app", host=args.host, port=args.port)
+    try:
+        uvicorn.run("gerg_driver.server:app", host=args.host, port=args.port)
+    except KeyboardInterrupt:
+        # Allow CTRL+C to exit cleanly without a traceback.
+        return
