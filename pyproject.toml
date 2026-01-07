@@ -24,6 +24,10 @@ dependencies = [
 [project.scripts]
 picarx-serve = "gerg_driver.server:main"
 
+[tool.poe.tasks]
+serve = "picarx-serve"
+
+
 [project.urls]
 Repository = "https://github.com/sunfounder/picar-x"
 Issues = "https://github.com/sunfounder/picar-x/issues"
@@ -39,6 +43,3 @@ packages = [
 
 [tool.setuptools.dynamic]
 version = {attr = "picarx.version.__version__"}
-
-[tool.poe.tasks]
-vroom = "python3 custom_gerg_stuff/vroomvroomcar.py"
