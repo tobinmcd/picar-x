@@ -84,15 +84,33 @@ class CameraStream:
             return buffer.getvalue()
 
     def stream(self):
-        boundary = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
         while self.available:
             frame = self.get_frame()
             if frame is None:
                 time.sleep(0.25)
                 continue
-            yield boundary + frame + b"\r\n"
+            header = (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                + f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii")
+            )
+            yield header + frame + b"\r\n"
 
 camera_stream = CameraStream()
+
+class GracefulStreamingResponse(StreamingResponse):
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        except asyncio.CancelledError:
+            # Shutdown can cancel ongoing streams; suppress noisy tracebacks.
+            return
+
+    async def listen_for_disconnect(self, receive) -> None:
+        try:
+            await super().listen_for_disconnect(receive)
+        except asyncio.CancelledError:
+            return
 
 
 @asynccontextmanager
@@ -136,9 +154,14 @@ async def camera_status():
 async def video_feed():
     if not camera_stream.available:
         raise HTTPException(status_code=503, detail="Camera unavailable")
-    return StreamingResponse(
+    return GracefulStreamingResponse(
         camera_stream.stream(),
         media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 
