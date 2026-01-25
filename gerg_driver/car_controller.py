@@ -1,6 +1,7 @@
 # car_controller.py
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Set, Union
@@ -64,9 +65,12 @@ class CarController:
     camera_center_keys: Set[str] = field(default_factory=lambda: {"center-camera"})
     pan_angle: int = 0
     tilt_angle: int = 0
+    pan_angle_f: float = 0.0
+    tilt_angle_f: float = 0.0
     last_dir_angle: int | None = None
     last_drive_direction: int | None = None
     last_drive_speed: int | None = None
+    camera_speed_scale: float = 1.0
     gamepad_deadzone: float = 0.08
     gamepad_timeout_s: float = 0.6
     gamepad_active: bool = False
@@ -205,17 +209,27 @@ class CarController:
 
         if new_tilt != self.tilt_angle:
             self.tilt_angle = new_tilt
+            self.tilt_angle_f = float(new_tilt)
             px.set_cam_tilt_angle(new_tilt)
 
         if new_pan != self.pan_angle:
             self.pan_angle = new_pan
+            self.pan_angle_f = float(new_pan)
             px.set_cam_pan_angle(new_pan)
 
     def _update_camera_gamepad(self, px) -> None:
-        pan = int(round(self.camera_limit * self.gamepad_rx))
-        tilt = int(round(self.camera_limit * -self.gamepad_ry))
-        pan = self._clamp_camera_angle(pan)
-        tilt = self._clamp_camera_angle(tilt)
+        delta_pan = self.camera_step * self.camera_speed_scale * self.gamepad_rx
+        delta_tilt = self.camera_step * self.camera_speed_scale * -self.gamepad_ry
+        if delta_pan == 0.0 and delta_tilt == 0.0:
+            return
+
+        new_pan_f = self._clamp_camera_angle_float(self.pan_angle_f + delta_pan)
+        new_tilt_f = self._clamp_camera_angle_float(self.tilt_angle_f + delta_tilt)
+        pan = self._round_camera_angle(new_pan_f)
+        tilt = self._round_camera_angle(new_tilt_f)
+
+        self.pan_angle_f = new_pan_f
+        self.tilt_angle_f = new_tilt_f
 
         if pan != self.pan_angle:
             self.pan_angle = pan
@@ -241,6 +255,19 @@ class CarController:
         if value < -limit:
             return -limit
         return value
+
+    def _clamp_camera_angle_float(self, value: float) -> float:
+        limit = float(self.camera_limit)
+        if value > limit:
+            return limit
+        if value < -limit:
+            return -limit
+        return value
+
+    def _round_camera_angle(self, value: float) -> int:
+        if value >= 0:
+            return int(math.floor(value + 0.5))
+        return int(math.ceil(value - 0.5))
 
     def _set_dir_servo_angle(self, px, angle: int) -> None:
         if self.last_dir_angle is not None and self.last_dir_angle == angle:
@@ -271,9 +298,13 @@ class CarController:
         if px is None:
             self.pan_angle = 0
             self.tilt_angle = 0
+            self.pan_angle_f = 0.0
+            self.tilt_angle_f = 0.0
             return
         self.pan_angle = 0
         self.tilt_angle = 0
+        self.pan_angle_f = 0.0
+        self.tilt_angle_f = 0.0
         px.set_cam_pan_angle(0)
         px.set_cam_tilt_angle(0)
 
@@ -307,6 +338,8 @@ class CarController:
             self.px.stop()
         self.pan_angle = 0
         self.tilt_angle = 0
+        self.pan_angle_f = 0.0
+        self.tilt_angle_f = 0.0
         self.last_dir_angle = 0
         self.last_drive_direction = 0
         self.last_drive_speed = 0
