@@ -5,7 +5,6 @@ import argparse
 import asyncio
 import io
 import json
-import signal
 import threading
 import time
 from contextlib import asynccontextmanager, suppress
@@ -252,17 +251,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     server = uvicorn.Server(config)
 
-    def _handle_exit(signum, frame) -> None:
-        if server.should_exit:
-            server.force_exit = True
-        else:
-            server.should_exit = True
-
-    server.install_signal_handlers = False
-    signal.signal(signal.SIGINT, _handle_exit)
-    signal.signal(signal.SIGTERM, _handle_exit)
     try:
         server.run()
-    finally:
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
-        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    except KeyboardInterrupt:
+        # Uvicorn translates shutdown cancellation into KeyboardInterrupt.
+        # Swallow it so Ctrl-C exits cleanly without a traceback.
+        return

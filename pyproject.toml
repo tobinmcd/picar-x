@@ -40,8 +40,7 @@ robot-sync = "uv sync --group robot"
 
 
 [project.urls]
-Repository = "https://github.com/sunfounder/picar-x"
-Issues = "https://github.com/sunfounder/picar-x/issues"
+Repository = "https://github.com/tobinmcd/picar-x"
 
 [tool.setuptools]
 packages = [
