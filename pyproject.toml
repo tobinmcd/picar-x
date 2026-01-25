@@ -23,6 +23,12 @@ dependencies = [
 ]
 
 [dependency-groups]
+dev = [
+    "poethepoet>=0.27.0",
+    "pyright>=1.1.389",
+    "pytest>=8.3.4",
+    "ruff>=0.9.1",
+]
 robot = [
     "robot-hat @ git+https://github.com/sunfounder/robot-hat.git",
     "vilib @ git+https://github.com/sunfounder/vilib.git",
@@ -34,9 +40,22 @@ robot = [
 [project.scripts]
 picarx-serve = "gerg_driver.server:main"
 
+[tool.poe.executor]
+type = "uv"
+
 [tool.poe.tasks]
 serve = "picarx-serve"
 robot-sync = "uv sync --group robot"
+sync = "uv sync --group dev"
+upgrade = "uv sync --group dev --upgrade"
+lint = "python -m ruff check gerg_driver"
+lint-fix = "python -m ruff check gerg_driver --fix"
+fmt = "python -m ruff format gerg_driver"
+fmt-check = "python -m ruff format --check gerg_driver"
+typecheck = "python -m pyright"
+test = "pytest -q"
+fast = { sequence = ["lint", "fmt-check", "typecheck"] }
+full = { sequence = ["lint", "fmt-check", "typecheck", "test"] }
 
 
 [project.urls]
@@ -53,3 +72,27 @@ packages = [
 
 [tool.setuptools.dynamic]
 version = {attr = "picarx.version.__version__"}
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+fix = false
+force-exclude = true
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+force-sort-within-sections = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+pythonVersion = "3.13"
+venvPath = "."
+typeCheckingMode = "basic"
+reportMissingTypeStubs = false
+include = ["gerg_driver"]
