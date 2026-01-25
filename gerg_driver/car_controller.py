@@ -1,6 +1,7 @@
 # car_controller.py
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Set, Union
 
@@ -63,6 +64,17 @@ class CarController:
     camera_center_keys: Set[str] = field(default_factory=lambda: {"center-camera"})
     pan_angle: int = 0
     tilt_angle: int = 0
+    last_dir_angle: int | None = None
+    last_drive_direction: int | None = None
+    last_drive_speed: int | None = None
+    gamepad_deadzone: float = 0.08
+    gamepad_timeout_s: float = 0.6
+    gamepad_active: bool = False
+    gamepad_last_ts: float = 0.0
+    gamepad_lx: float = 0.0
+    gamepad_ly: float = 0.0
+    gamepad_rx: float = 0.0
+    gamepad_ry: float = 0.0
 
     def on_key_event(self, key: str, pressed: bool) -> None:
         """Handle a key down/up event coming from the web client."""
@@ -76,6 +88,25 @@ class CarController:
         else:
             self.active_keys.discard(k)
         self._apply_motion()
+
+    def on_gamepad_state(self, lx: float, ly: float, rx: float, ry: float) -> None:
+        """Handle analog gamepad state from the web client."""
+        self.gamepad_active = True
+        self.gamepad_last_ts = time.monotonic()
+        self.gamepad_lx = self._apply_deadzone(self._clamp_axis(lx))
+        self.gamepad_ly = self._apply_deadzone(self._clamp_axis(ly))
+        self.gamepad_rx = self._apply_deadzone(self._clamp_axis(rx))
+        self.gamepad_ry = self._apply_deadzone(self._clamp_axis(ry))
+        self._apply_motion()
+
+    def clear_gamepad(self) -> None:
+        """Forget any gamepad state and return to keyboard control."""
+        self.gamepad_active = False
+        self.gamepad_last_ts = 0.0
+        self.gamepad_lx = 0.0
+        self.gamepad_ly = 0.0
+        self.gamepad_rx = 0.0
+        self.gamepad_ry = 0.0
 
     def clear_keys(self) -> None:
         """Forget any keys the server thinks are active and stop motion."""
@@ -91,15 +122,29 @@ class CarController:
         if px is None:
             return
 
-        self._apply_drive(px)
-        self._update_camera(px)
+        if self._use_gamepad():
+            self._apply_drive_gamepad(px)
+            self._update_camera_gamepad(px)
+        else:
+            self._apply_drive(px)
+            self._update_camera(px)
 
     def tick(self) -> None:
         """Call periodically to keep the camera moving while keys are held."""
         px = self._require_px(log=False)
         if px is None:
             return
-        self._update_camera(px)
+        if self.gamepad_active and self.gamepad_last_ts:
+            if time.monotonic() - self.gamepad_last_ts > self.gamepad_timeout_s:
+                self.clear_gamepad()
+                if self.active_keys:
+                    self._apply_motion()
+                else:
+                    self._set_drive(px, direction=0, speed=0)
+                    self._set_dir_servo_angle(px, 0)
+                return
+        if not self._use_gamepad():
+            self._update_camera(px)
 
     def _require_px(self, *, log: bool = True):
         px = self.px
@@ -115,20 +160,34 @@ class CarController:
 
         # --- Drive direction ---
         if (not moving_forward and not moving_back) or (moving_forward and moving_back):
-            px.stop()
+            self._set_drive(px, direction=0, speed=0)
         else:
             if moving_forward:
-                px.forward(self.speed)
+                self._set_drive(px, direction=1, speed=self.speed)
             elif moving_back:
-                px.backward(self.speed)
+                self._set_drive(px, direction=-1, speed=self.speed)
 
         # --- Steering servo ---
         if turning_left and not turning_right:
-            px.set_dir_servo_angle(-self.turn_angle)
+            self._set_dir_servo_angle(px, -self.turn_angle)
         elif turning_right and not turning_left:
-            px.set_dir_servo_angle(self.turn_angle)
+            self._set_dir_servo_angle(px, self.turn_angle)
         else:
-            px.set_dir_servo_angle(0)
+            self._set_dir_servo_angle(px, 0)
+
+    def _apply_drive_gamepad(self, px) -> None:
+        steering = int(round(self.turn_angle * self.gamepad_lx))
+        self._set_dir_servo_angle(px, steering)
+
+        if self.gamepad_ly == 0.0:
+            self._set_drive(px, direction=0, speed=0)
+            return
+
+        speed = int(round(self.speed * abs(self.gamepad_ly)))
+        if self.gamepad_ly < 0:
+            self._set_drive(px, direction=1, speed=speed)
+        else:
+            self._set_drive(px, direction=-1, speed=speed)
 
     def _update_camera(self, px) -> None:
         """Incrementally apply camera movement."""
@@ -152,6 +211,20 @@ class CarController:
             self.pan_angle = new_pan
             px.set_cam_pan_angle(new_pan)
 
+    def _update_camera_gamepad(self, px) -> None:
+        pan = int(round(self.camera_limit * self.gamepad_rx))
+        tilt = int(round(self.camera_limit * -self.gamepad_ry))
+        pan = self._clamp_camera_angle(pan)
+        tilt = self._clamp_camera_angle(tilt)
+
+        if pan != self.pan_angle:
+            self.pan_angle = pan
+            px.set_cam_pan_angle(pan)
+
+        if tilt != self.tilt_angle:
+            self.tilt_angle = tilt
+            px.set_cam_tilt_angle(tilt)
+
     def _next_camera_angle(
         self, current: int, *, positive: bool, negative: bool
     ) -> int:
@@ -169,6 +242,29 @@ class CarController:
             return -limit
         return value
 
+    def _set_dir_servo_angle(self, px, angle: int) -> None:
+        if self.last_dir_angle is not None and self.last_dir_angle == angle:
+            return
+        self.last_dir_angle = angle
+        px.set_dir_servo_angle(angle)
+
+    def _set_drive(self, px, *, direction: int, speed: int) -> None:
+        if (
+            self.last_drive_direction is not None
+            and self.last_drive_speed is not None
+            and self.last_drive_direction == direction
+            and self.last_drive_speed == speed
+        ):
+            return
+        self.last_drive_direction = direction
+        self.last_drive_speed = speed
+        if direction == 0:
+            px.stop()
+        elif direction > 0:
+            px.forward(speed)
+        else:
+            px.backward(speed)
+
     def recenter_camera(self) -> None:
         """Snap the camera back to the neutral pan/tilt position."""
         px = self._require_px()
@@ -181,6 +277,27 @@ class CarController:
         px.set_cam_pan_angle(0)
         px.set_cam_tilt_angle(0)
 
+    def _use_gamepad(self) -> bool:
+        if not self.gamepad_active:
+            return False
+        if self.gamepad_last_ts:
+            if time.monotonic() - self.gamepad_last_ts > self.gamepad_timeout_s:
+                self.gamepad_active = False
+                return False
+        return True
+
+    def _apply_deadzone(self, value: float) -> float:
+        if abs(value) < self.gamepad_deadzone:
+            return 0.0
+        return value
+
+    def _clamp_axis(self, value: float) -> float:
+        if value > 1.0:
+            return 1.0
+        if value < -1.0:
+            return -1.0
+        return value
+
     def shutdown(self) -> None:
         """Reset the robot to a safe neutral state."""
         if self.px is not None:
@@ -190,3 +307,6 @@ class CarController:
             self.px.stop()
         self.pan_angle = 0
         self.tilt_angle = 0
+        self.last_dir_angle = 0
+        self.last_drive_direction = 0
+        self.last_drive_speed = 0

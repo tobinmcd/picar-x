@@ -19,10 +19,14 @@ dependencies = [
     "fastapi[standard]>=0.121.2",
     "gpiozero>=2.0.1",
     "keyboard>=0.13.5",
-    "robot-hat",
-    "smbus2>=0.6.0",
     "uvicorn>=0.22.0",
-    "vilib",
+]
+
+[dependency-groups]
+robot = [
+    "robot-hat @ git+https://github.com/sunfounder/robot-hat.git",
+    "vilib @ git+https://github.com/sunfounder/vilib.git",
+    "smbus2>=0.6.0",
 ]
 
 [project.scripts]
@@ -30,6 +34,7 @@ picarx-serve = "gerg_driver.server:main"
 
 [tool.poe.tasks]
 serve = "picarx-serve"
+robot-sync = "uv sync --group robot"
 
 
 [project.urls]
@@ -47,7 +52,3 @@ packages = [
 
 [tool.setuptools.dynamic]
 version = {attr = "picarx.version.__version__"}
-
-[tool.uv.sources]
-robot-hat = { path = "../robot-hat", editable = true }
-vilib = { path = "../vilib", editable = true }

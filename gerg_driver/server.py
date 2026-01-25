@@ -172,6 +172,18 @@ async def websocket_keys(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             payload = json.loads(data)
+            msg_type = payload.get("type")
+            if msg_type == "gamepad":
+                axes = payload.get("axes", {})
+                controller.on_gamepad_state(
+                    float(axes.get("lx", 0.0)),
+                    float(axes.get("ly", 0.0)),
+                    float(axes.get("rx", 0.0)),
+                    float(axes.get("ry", 0.0)),
+                )
+                await websocket.send_text("ok gamepad")
+                continue
+
             key = payload.get("key")
             pressed = bool(payload.get("pressed", True))
             if key is not None:
@@ -181,6 +193,7 @@ async def websocket_keys(websocket: WebSocket):
     except WebSocketDisconnect:
         # Client closed the connection; ensure the robot stops safely.
         controller.clear_keys()
+        controller.clear_gamepad()
         controller.shutdown()
 
 

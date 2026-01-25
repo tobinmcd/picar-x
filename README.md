@@ -15,6 +15,35 @@ Picar-X Python library for Raspberry Pi.
   You also need to install robot_hat, vilib, sunfounder_controller and other dependent libraries.\
   <https://docs.sunfounder.com/projects/picar-x-v20/en/latest/python/python_start/install_all_modules.html>
 
+## UV-based setup (recommended for this fork)
+
+This fork uses `uv` to manage dependencies and includes the `gerg_driver` FastAPI server.
+Robot-only libraries are grouped so development machines can install without hardware
+dependencies.
+
+```bash
+# Local development (no robot-only deps)
+uv sync
+
+# Robot environment (includes robot-hat, vilib, smbus2 via git URLs)
+uv sync --group robot
+```
+
+The robot-only dependencies are pulled from the SunFounder GitHub repos, so you do
+not need local checkouts for `robot-hat` or `vilib`.
+
+To run the FastAPI control server (`gerg_driver`):
+
+```bash
+uv run picarx-serve --host 0.0.0.0 --port 8000
+```
+
+You can also sync robot dependencies with `poe`:
+
+```bash
+poe robot-sync
+```
+
 ```bash
 # Install robot_hat
 git clone --depth 1 -b 2.5.x https://github.com/sunfounder/robot-hat.git

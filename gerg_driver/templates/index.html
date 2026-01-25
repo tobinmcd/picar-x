@@ -18,23 +18,25 @@
   <body>
     <h1>PiCar-X Controller</h1>
     <p>
-      Use <span class="key-hint">W</span>
-          <span class="key-hint">A</span>
-          <span class="key-hint">S</span>
-          <span class="key-hint">D</span>
-      or arrow keys to drive the robot.
+      Use a DualShock controller: left stick drives, right stick aims the camera.
+      Centered sticks keep the car stopped and the camera centered.
     </p>
     <p>
-      Aim the camera with
+      Keyboard fallback: <span class="key-hint">W</span>
+      <span class="key-hint">A</span>
+      <span class="key-hint">S</span>
+      <span class="key-hint">D</span>,
+      arrow keys to drive, and
       <span class="key-hint">I</span>
       <span class="key-hint">J</span>
       <span class="key-hint">K</span>
-      <span class="key-hint">L</span>.
+      <span class="key-hint">L</span> for the camera.
     </p>
     <button id="recenter-camera" class="control-button" type="button" disabled>
       Recenter camera
     </button>
     <p id="status">Connecting...</p>
+    <p id="gamepad-status" class="status-line">Gamepad: waiting for controller...</p>
     <div class="camera-container">
       <h2>Live camera</h2>
       <div class="camera-frame">
@@ -117,6 +119,101 @@
           ws.send(JSON.stringify({ key: "center-camera", pressed: true }));
         }
       });
+
+      const gamepadStatusEl = document.getElementById("gamepad-status");
+      const GAMEPAD_DEADZONE = 0.1;
+      const GAMEPAD_EPSILON = 0.02;
+      const GAMEPAD_SEND_INTERVAL_MS = 40;
+      let gamepadConnected = false;
+      let lastGamepadSentAt = 0;
+      let lastGamepad = { lx: 0, ly: 0, rx: 0, ry: 0 };
+
+      function applyDeadzone(value) {
+        if (Math.abs(value) < GAMEPAD_DEADZONE) {
+          return 0;
+        }
+        return value;
+      }
+
+      function getPrimaryGamepad() {
+        if (!navigator.getGamepads) {
+          return null;
+        }
+        const pads = navigator.getGamepads();
+        if (!pads) {
+          return null;
+        }
+        for (const pad of pads) {
+          if (pad && pad.connected) {
+            return pad;
+          }
+        }
+        return null;
+      }
+
+      function sendGamepadAxes(lx, ly, rx, ry, force = false) {
+        if (ws.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        const now = performance.now();
+        const delta = Math.max(
+          Math.abs(lx - lastGamepad.lx),
+          Math.abs(ly - lastGamepad.ly),
+          Math.abs(rx - lastGamepad.rx),
+          Math.abs(ry - lastGamepad.ry)
+        );
+        if (!force && delta < GAMEPAD_EPSILON && now - lastGamepadSentAt < GAMEPAD_SEND_INTERVAL_MS) {
+          return;
+        }
+        lastGamepad = { lx, ly, rx, ry };
+        lastGamepadSentAt = now;
+        ws.send(JSON.stringify({ type: "gamepad", axes: { lx, ly, rx, ry } }));
+      }
+
+      function pollGamepad() {
+        if (!navigator.getGamepads) {
+          gamepadStatusEl.textContent = "Gamepad: not supported by this browser.";
+          return;
+        }
+        const pad = getPrimaryGamepad();
+        if (!pad) {
+          if (gamepadConnected) {
+            gamepadConnected = false;
+            gamepadStatusEl.textContent = "Gamepad: disconnected";
+            sendGamepadAxes(0, 0, 0, 0, true);
+          }
+          requestAnimationFrame(pollGamepad);
+          return;
+        }
+
+        if (!gamepadConnected) {
+          gamepadConnected = true;
+          const name = pad.id ? pad.id : "connected";
+          gamepadStatusEl.textContent = `Gamepad: ${name}`;
+        }
+
+        const axes = pad.axes || [];
+        const lx = applyDeadzone(axes[0] || 0);
+        const ly = applyDeadzone(axes[1] || 0);
+        const rx = applyDeadzone(axes[2] || 0);
+        const ry = applyDeadzone(axes[3] || 0);
+        sendGamepadAxes(lx, ly, rx, ry);
+        requestAnimationFrame(pollGamepad);
+      }
+
+      window.addEventListener("gamepadconnected", (event) => {
+        gamepadConnected = true;
+        const name = event.gamepad && event.gamepad.id ? event.gamepad.id : "connected";
+        gamepadStatusEl.textContent = `Gamepad: ${name}`;
+      });
+
+      window.addEventListener("gamepaddisconnected", () => {
+        gamepadConnected = false;
+        gamepadStatusEl.textContent = "Gamepad: disconnected";
+        sendGamepadAxes(0, 0, 0, 0, true);
+      });
+
+      requestAnimationFrame(pollGamepad);
 
       const cameraStatusEl = document.getElementById("camera-status");
       const cameraImg = document.getElementById("camera-feed");
