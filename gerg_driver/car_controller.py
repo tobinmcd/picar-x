@@ -4,10 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 import time
-from typing import TYPE_CHECKING, Protocol, Set, cast
-
-if TYPE_CHECKING:
-    from picarx import Picarx as HardwarePicarx
+from typing import Protocol, cast
 
 
 class PicarxProtocol(Protocol):
@@ -74,16 +71,16 @@ class CarController:
     camera_step: float = 0.8
     camera_pan_limit: int = 45
     camera_tilt_limit: int = 30
-    active_keys: Set[str] = field(default_factory=set)
-    forward_keys: Set[str] = field(default_factory=lambda: {"w", "arrowup"})
-    back_keys: Set[str] = field(default_factory=lambda: {"s", "arrowdown"})
-    left_keys: Set[str] = field(default_factory=lambda: {"a", "arrowleft"})
-    right_keys: Set[str] = field(default_factory=lambda: {"d", "arrowright"})
-    camera_up_keys: Set[str] = field(default_factory=lambda: {"i"})
-    camera_down_keys: Set[str] = field(default_factory=lambda: {"k"})
-    camera_left_keys: Set[str] = field(default_factory=lambda: {"j"})
-    camera_right_keys: Set[str] = field(default_factory=lambda: {"l"})
-    camera_center_keys: Set[str] = field(default_factory=lambda: {"center-camera"})
+    active_keys: set[str] = field(default_factory=set)
+    forward_keys: set[str] = field(default_factory=lambda: {"w", "arrowup"})
+    back_keys: set[str] = field(default_factory=lambda: {"s", "arrowdown"})
+    left_keys: set[str] = field(default_factory=lambda: {"a", "arrowleft"})
+    right_keys: set[str] = field(default_factory=lambda: {"d", "arrowright"})
+    camera_up_keys: set[str] = field(default_factory=lambda: {"i"})
+    camera_down_keys: set[str] = field(default_factory=lambda: {"k"})
+    camera_left_keys: set[str] = field(default_factory=lambda: {"j"})
+    camera_right_keys: set[str] = field(default_factory=lambda: {"l"})
+    camera_center_keys: set[str] = field(default_factory=lambda: {"center-camera"})
     pan_angle: int = 0
     tilt_angle: int = 0
     pan_angle_f: float = 0.0
@@ -159,15 +156,18 @@ class CarController:
         px = self._require_px(log=False)
         if px is None:
             return
-        if self.gamepad_active and self.gamepad_last_ts:
-            if time.monotonic() - self.gamepad_last_ts > self.gamepad_timeout_s:
-                self.clear_gamepad()
-                if self.active_keys:
-                    self._apply_motion()
-                else:
-                    self._set_drive(px, direction=0, speed=0)
-                    self._set_dir_servo_angle(px, 0)
-                return
+        if (
+            self.gamepad_active
+            and self.gamepad_last_ts
+            and time.monotonic() - self.gamepad_last_ts > self.gamepad_timeout_s
+        ):
+            self.clear_gamepad()
+            if self.active_keys:
+                self._apply_motion()
+            else:
+                self._set_drive(px, direction=0, speed=0)
+                self._set_dir_servo_angle(px, 0)
+            return
         if not self._use_gamepad():
             self._update_camera(px)
 
@@ -201,14 +201,14 @@ class CarController:
             self._set_dir_servo_angle(px, 0)
 
     def _apply_drive_gamepad(self, px) -> None:
-        steering = int(round(self.turn_angle * self.gamepad_lx))
+        steering = round(self.turn_angle * self.gamepad_lx)
         self._set_dir_servo_angle(px, steering)
 
         if self.gamepad_ly == 0.0:
             self._set_drive(px, direction=0, speed=0)
             return
 
-        speed = int(round(self.speed * abs(self.gamepad_ly)))
+        speed = round(self.speed * abs(self.gamepad_ly))
         if self.gamepad_ly < 0:
             self._set_drive(px, direction=1, speed=speed)
         else:
@@ -221,13 +221,16 @@ class CarController:
         pan_right = bool(self.active_keys & self.camera_right_keys)
         pan_left = bool(self.active_keys & self.camera_left_keys)
 
-        delta_pan = self.camera_step * (1 if pan_right else 0) - self.camera_step * (1 if pan_left else 0)
-        delta_tilt = self.camera_step * (1 if tilt_up else 0) - self.camera_step * (1 if tilt_down else 0)
+        delta_pan = self.camera_step * ((1 if pan_right else 0) - (1 if pan_left else 0))
+        delta_tilt = self.camera_step * ((1 if tilt_up else 0) - (1 if tilt_down else 0))
         if delta_pan == 0.0 and delta_tilt == 0.0:
             return
 
         new_pan_f = self._clamp_camera_angle(self.pan_angle_f + delta_pan, self.camera_pan_limit)
-        new_tilt_f = self._clamp_camera_angle(self.tilt_angle_f + delta_tilt, self.camera_tilt_limit)
+        new_tilt_f = self._clamp_camera_angle(
+            self.tilt_angle_f + delta_tilt,
+            self.camera_tilt_limit,
+        )
         pan = self._round_camera_angle(new_pan_f)
         tilt = self._round_camera_angle(new_tilt_f)
 
@@ -249,7 +252,10 @@ class CarController:
             return
 
         new_pan_f = self._clamp_camera_angle(self.pan_angle_f + delta_pan, self.camera_pan_limit)
-        new_tilt_f = self._clamp_camera_angle(self.tilt_angle_f + delta_tilt, self.camera_tilt_limit)
+        new_tilt_f = self._clamp_camera_angle(
+            self.tilt_angle_f + delta_tilt,
+            self.camera_tilt_limit,
+        )
         pan = self._round_camera_angle(new_pan_f)
         tilt = self._round_camera_angle(new_tilt_f)
 
@@ -274,8 +280,8 @@ class CarController:
 
     def _round_camera_angle(self, value: float) -> int:
         if value >= 0:
-            return int(math.floor(value + 0.5))
-        return int(math.ceil(value - 0.5))
+            return math.floor(value + 0.5)
+        return math.ceil(value - 0.5)
 
     def _set_dir_servo_angle(self, px, angle: int) -> None:
         if self.last_dir_angle is not None and self.last_dir_angle == angle:
@@ -319,10 +325,12 @@ class CarController:
     def _use_gamepad(self) -> bool:
         if not self.gamepad_active:
             return False
-        if self.gamepad_last_ts:
-            if time.monotonic() - self.gamepad_last_ts > self.gamepad_timeout_s:
-                self.gamepad_active = False
-                return False
+        if (
+            self.gamepad_last_ts
+            and time.monotonic() - self.gamepad_last_ts > self.gamepad_timeout_s
+        ):
+            self.gamepad_active = False
+            return False
         return True
 
     def _apply_deadzone(self, value: float) -> float:

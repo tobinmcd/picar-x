@@ -17,10 +17,15 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
 import uvicorn
 
+
+def _getlogin_fallback() -> str:
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
 try:
     os.getlogin()
 except OSError:
-    os.getlogin = lambda: pwd.getpwuid(os.getuid()).pw_name
+    os.getlogin = _getlogin_fallback  # type: ignore[assignment]
 
 try:
     from .car_controller import CarController, Picarx
@@ -41,9 +46,9 @@ except ImportError:
 
 
 try:
-    import numpy as np  # type: ignore
     from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack  # type: ignore
     from av import VideoFrame  # type: ignore
+    import numpy as np  # type: ignore
 
     _WEBRTC_IMPORT_ERROR = False
 except ImportError:
@@ -122,10 +127,8 @@ class CameraStream:
     def close(self) -> None:
         picam2 = self._picam2
         if picam2 is not None:
-            try:
+            with suppress(Exception):
                 picam2.stop()
-            except Exception:
-                pass
             picam2.close()
         self._picam2 = None
         self.available = False
@@ -175,6 +178,7 @@ camera_stream = CameraStream()
 
 WEBRTC_AVAILABLE = not _WEBRTC_IMPORT_ERROR and np is not None
 _peer_connections: set[Any] = set()
+_close_tasks: set[asyncio.Task[None]] = set()
 
 
 class GracefulStreamingResponse(StreamingResponse):
@@ -289,7 +293,9 @@ async def webrtc_offer(payload: dict):
     @pc.on("connectionstatechange")
     def on_connectionstatechange():
         if pc.connectionState in {"failed", "closed", "disconnected"}:
-            asyncio.create_task(_close_peer(pc))
+            task = asyncio.create_task(_close_peer(pc))
+            _close_tasks.add(task)
+            task.add_done_callback(_close_tasks.discard)
 
     pc.addTrack(CameraVideoTrack(camera_stream))
 
