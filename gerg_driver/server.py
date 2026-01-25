@@ -48,7 +48,7 @@ except ImportError:
 # the mock in car_controller will be used instead.
 px = Picarx()
 controller = CarController(px=px)
-TICK_INTERVAL = 0.03  # shorter interval to keep camera motion smooth
+TICK_INTERVAL = 0.02  # shorter interval to keep camera motion smooth
 _tick_task: asyncio.Task | None = None
 
 class CameraStream:

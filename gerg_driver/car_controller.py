@@ -71,8 +71,9 @@ class CarController:
 
     speed: int = 100  # tune this
     turn_angle: int = 20  # steering servo angle
-    camera_step: int = 1
-    camera_limit: int = 30
+    camera_step: float = 0.5
+    camera_pan_limit: int = 45
+    camera_tilt_limit: int = 30
     active_keys: Set[str] = field(default_factory=set)
     forward_keys: Set[str] = field(default_factory=lambda: {"w", "arrowup"})
     back_keys: Set[str] = field(default_factory=lambda: {"s", "arrowdown"})
@@ -220,31 +221,13 @@ class CarController:
         pan_right = bool(self.active_keys & self.camera_right_keys)
         pan_left = bool(self.active_keys & self.camera_left_keys)
 
-        new_tilt = self._next_camera_angle(
-            self.tilt_angle, positive=tilt_up, negative=tilt_down
-        )
-        new_pan = self._next_camera_angle(
-            self.pan_angle, positive=pan_right, negative=pan_left
-        )
-
-        if new_tilt != self.tilt_angle:
-            self.tilt_angle = new_tilt
-            self.tilt_angle_f = float(new_tilt)
-            px.set_cam_tilt_angle(new_tilt)
-
-        if new_pan != self.pan_angle:
-            self.pan_angle = new_pan
-            self.pan_angle_f = float(new_pan)
-            px.set_cam_pan_angle(new_pan)
-
-    def _update_camera_gamepad(self, px) -> None:
-        delta_pan = self.camera_step * self.camera_speed_scale * self.gamepad_rx
-        delta_tilt = self.camera_step * self.camera_speed_scale * -self.gamepad_ry
+        delta_pan = self.camera_step * (1 if pan_right else 0) - self.camera_step * (1 if pan_left else 0)
+        delta_tilt = self.camera_step * (1 if tilt_up else 0) - self.camera_step * (1 if tilt_down else 0)
         if delta_pan == 0.0 and delta_tilt == 0.0:
             return
 
-        new_pan_f = self._clamp_camera_angle_float(self.pan_angle_f + delta_pan)
-        new_tilt_f = self._clamp_camera_angle_float(self.tilt_angle_f + delta_tilt)
+        new_pan_f = self._clamp_camera_angle(self.pan_angle_f + delta_pan, self.camera_pan_limit)
+        new_tilt_f = self._clamp_camera_angle(self.tilt_angle_f + delta_tilt, self.camera_tilt_limit)
         pan = self._round_camera_angle(new_pan_f)
         tilt = self._round_camera_angle(new_tilt_f)
 
@@ -259,29 +242,34 @@ class CarController:
             self.tilt_angle = tilt
             px.set_cam_tilt_angle(tilt)
 
-    def _next_camera_angle(
-        self, current: int, *, positive: bool, negative: bool
-    ) -> int:
-        if positive and not negative:
-            return self._clamp_camera_angle(current + self.camera_step)
-        if negative and not positive:
-            return self._clamp_camera_angle(current - self.camera_step)
-        return current
+    def _update_camera_gamepad(self, px) -> None:
+        delta_pan = self.camera_step * self.camera_speed_scale * self.gamepad_rx
+        delta_tilt = self.camera_step * self.camera_speed_scale * -self.gamepad_ry
+        if delta_pan == 0.0 and delta_tilt == 0.0:
+            return
 
-    def _clamp_camera_angle(self, value: int) -> int:
-        limit = self.camera_limit
-        if value > limit:
-            return limit
-        if value < -limit:
-            return -limit
-        return value
+        new_pan_f = self._clamp_camera_angle(self.pan_angle_f + delta_pan, self.camera_pan_limit)
+        new_tilt_f = self._clamp_camera_angle(self.tilt_angle_f + delta_tilt, self.camera_tilt_limit)
+        pan = self._round_camera_angle(new_pan_f)
+        tilt = self._round_camera_angle(new_tilt_f)
 
-    def _clamp_camera_angle_float(self, value: float) -> float:
-        limit = float(self.camera_limit)
-        if value > limit:
-            return limit
-        if value < -limit:
-            return -limit
+        self.pan_angle_f = new_pan_f
+        self.tilt_angle_f = new_tilt_f
+
+        if pan != self.pan_angle:
+            self.pan_angle = pan
+            px.set_cam_pan_angle(pan)
+
+        if tilt != self.tilt_angle:
+            self.tilt_angle = tilt
+            px.set_cam_tilt_angle(tilt)
+
+    def _clamp_camera_angle(self, value: float, limit: int) -> float:
+        bound = float(limit)
+        if value > bound:
+            return bound
+        if value < -bound:
+            return -bound
         return value
 
     def _round_camera_angle(self, value: float) -> int:
