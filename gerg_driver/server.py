@@ -15,6 +15,13 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
 
+import os
+import pwd
+try:
+    os.getlogin()
+except OSError:
+    os.getlogin = lambda: pwd.getpwuid(os.getuid()).pw_name
+
 try:
     from car_controller import CarController, Picarx
 except ModuleNotFoundError:

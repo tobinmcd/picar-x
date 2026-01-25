@@ -15,6 +15,13 @@ Picar-X Python library for Raspberry Pi.
   You also need to install robot_hat, vilib, sunfounder_controller and other dependent libraries.\
   <https://docs.sunfounder.com/projects/picar-x-v20/en/latest/python/python_start/install_all_modules.html>
 
+Install Raspberry Pi system packages:
+
+```bash
+sudo apt install -y python3-picamera2 python3-spidev python3-rpi.gpio python3-gpiozero python3-lgpio \
+  portaudio19-dev python3-pyaudio
+```
+
 ## UV-based setup (recommended for this fork)
 
 This fork uses `uv` to manage dependencies and includes the `gerg_driver` FastAPI server.
