@@ -235,8 +235,8 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run the PiCar-X control server.")
     parser.add_argument(
         "--host",
-        default="127.0.0.1",
-        help="Interface to bind (default: loopback only)",
+        default="0.0.0.0",
+        help="Interface to bind (default: all interfaces)",
     )
     parser.add_argument(
         "--port",
