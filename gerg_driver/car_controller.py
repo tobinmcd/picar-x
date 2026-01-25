@@ -1,10 +1,10 @@
 # car_controller.py
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import math
 import time
-from dataclasses import dataclass, field
-from typing import Protocol, Set, TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, Set, cast
 
 if TYPE_CHECKING:
     from picarx import Picarx as HardwarePicarx

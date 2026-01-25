@@ -3,19 +3,20 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import io
-import json
-import threading
-import time
 from contextlib import asynccontextmanager, suppress
 from importlib import resources
-
-import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, StreamingResponse
-
+import io
+import json
 import os
 import pwd
+import threading
+import time
+from typing import TYPE_CHECKING, Any, cast
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, StreamingResponse
+import uvicorn
+
 try:
     os.getlogin()
 except OSError:
@@ -29,19 +30,56 @@ except ModuleNotFoundError:
 
 try:
     from picamera2 import Picamera2  # type: ignore
+
+    _PICAMERA_AVAILABLE = True
 except ImportError:
-    Picamera2 = None
+    _PICAMERA_AVAILABLE = False
+
+    class Picamera2:  # type: ignore[no-redef]
+        def __getattr__(self, name: str) -> Any:
+            raise AttributeError(name)
+
 
 try:
-    import numpy as np
-    from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
-    from av import VideoFrame
+    import numpy as np  # type: ignore
+    from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack  # type: ignore
+    from av import VideoFrame  # type: ignore
+
+    _WEBRTC_IMPORT_ERROR = False
 except ImportError:
     np = None
+    _WEBRTC_IMPORT_ERROR = True
     RTCPeerConnection = None
     RTCSessionDescription = None
-    VideoStreamTrack = None
-    VideoFrame = None
+
+    class VideoStreamTrack:  # type: ignore[no-redef]
+        async def next_timestamp(self):
+            raise NotImplementedError
+
+        async def recv(self):
+            raise NotImplementedError
+
+    class VideoFrame:  # type: ignore[no-redef]
+        @classmethod
+        def from_ndarray(cls, *args, **kwargs):
+            raise NotImplementedError
+
+
+if TYPE_CHECKING:
+
+    class _VideoStreamTrackBase:
+        async def next_timestamp(self):
+            raise NotImplementedError
+
+        async def recv(self):
+            raise NotImplementedError
+
+    class _PeerConnectionBase:
+        async def close(self) -> None:
+            raise NotImplementedError
+else:
+    _VideoStreamTrackBase = VideoStreamTrack
+    _PeerConnectionBase = RTCPeerConnection
 
 
 # Instantiate Picarx on the Pi. On your Mac, if you run this there,
@@ -51,16 +89,17 @@ controller = CarController(px=px)
 TICK_INTERVAL = 0.02  # shorter interval to keep camera motion smooth
 _tick_task: asyncio.Task | None = None
 
+
 class CameraStream:
     """Very small helper to expose the Pi camera as MJPEG frames."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._picam2: Picamera2 | None = None   # type: ignore
+        self._picam2: Picamera2 | None = None
         self._size = (640, 480)
         self.available = False
 
-        if Picamera2 is None:
+        if not _PICAMERA_AVAILABLE:
             print("[CameraStream] picamera2 not installed; camera feed disabled.")
             return
 
@@ -131,16 +170,12 @@ class CameraStream:
             )
             yield header + frame + b"\r\n"
 
+
 camera_stream = CameraStream()
 
-WEBRTC_AVAILABLE = (
-    RTCPeerConnection is not None
-    and RTCSessionDescription is not None
-    and VideoStreamTrack is not None
-    and VideoFrame is not None
-    and np is not None
-)
-_peer_connections: set[RTCPeerConnection] = set()
+WEBRTC_AVAILABLE = not _WEBRTC_IMPORT_ERROR and np is not None
+_peer_connections: set[Any] = set()
+
 
 class GracefulStreamingResponse(StreamingResponse):
     async def __call__(self, scope, receive, send) -> None:
@@ -177,12 +212,11 @@ def _load_html_template() -> str:
     try:
         return template_path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:  # pragma: no cover - packaging issue
-        raise RuntimeError(
-            "Missing PiCar-X controller template; reinstall picar-x."
-        ) from exc
+        raise RuntimeError("Missing PiCar-X controller template; reinstall picar-x.") from exc
 
 
 HTML_PAGE = _load_html_template()
+
 
 @app.get("/")
 async def index():
@@ -209,7 +243,7 @@ async def video_feed():
     )
 
 
-class CameraVideoTrack(VideoStreamTrack):
+class CameraVideoTrack(_VideoStreamTrackBase):
     def __init__(self, camera: CameraStream) -> None:
         super().__init__()
         self._camera = camera
@@ -217,6 +251,7 @@ class CameraVideoTrack(VideoStreamTrack):
         self._fallback_frame = None
 
     async def recv(self):
+        assert np is not None
         pts, time_base = await self.next_timestamp()
         frame = self._camera.get_frame_array()
         if frame is None:
@@ -228,7 +263,7 @@ class CameraVideoTrack(VideoStreamTrack):
             else:
                 frame = self._last_frame
         self._last_frame = frame
-        video_frame = VideoFrame.from_ndarray(frame, format="rgb24")
+        video_frame = cast(Any, VideoFrame.from_ndarray(frame, format="rgb24"))
         video_frame.pts = pts
         video_frame.time_base = time_base
         return video_frame
@@ -246,6 +281,8 @@ async def webrtc_offer(payload: dict):
     if not sdp or not sdp_type:
         raise HTTPException(status_code=400, detail="Missing SDP offer")
 
+    assert RTCPeerConnection is not None
+    assert RTCSessionDescription is not None
     pc = RTCPeerConnection()
     _peer_connections.add(pc)
 
@@ -261,10 +298,11 @@ async def webrtc_offer(payload: dict):
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
 
+    assert pc.localDescription is not None
     return {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
 
 
-async def _close_peer(pc: RTCPeerConnection) -> None:
+async def _close_peer(pc: _PeerConnectionBase) -> None:
     if pc in _peer_connections:
         _peer_connections.discard(pc)
     await pc.close()
