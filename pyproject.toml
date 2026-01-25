@@ -27,6 +27,7 @@ robot = [
     "robot-hat @ git+https://github.com/sunfounder/robot-hat.git",
     "vilib @ git+https://github.com/sunfounder/vilib.git",
     "smbus2>=0.6.0",
+    "pyaudio>=0.2.14",
 ]
 
 [project.scripts]
