@@ -124,9 +124,11 @@
       const GAMEPAD_DEADZONE = 0.1;
       const GAMEPAD_EPSILON = 0.02;
       const GAMEPAD_SEND_INTERVAL_MS = 40;
+      const GAMEPAD_RECENTER_BUTTON = 0; // DualShock X (Cross) in standard mapping
       let gamepadConnected = false;
       let lastGamepadSentAt = 0;
       let lastGamepad = { lx: 0, ly: 0, rx: 0, ry: 0 };
+      let lastRecenterPressed = false;
 
       function applyDeadzone(value) {
         if (Math.abs(value) < GAMEPAD_DEADZONE) {
@@ -198,6 +200,15 @@
         const rx = applyDeadzone(axes[2] || 0);
         const ry = applyDeadzone(axes[3] || 0);
         sendGamepadAxes(lx, ly, rx, ry);
+
+        const buttons = pad.buttons || [];
+        const recenterPressed = Boolean(buttons[GAMEPAD_RECENTER_BUTTON]?.pressed);
+        if (recenterPressed && !lastRecenterPressed) {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ key: "center-camera", pressed: true }));
+          }
+        }
+        lastRecenterPressed = recenterPressed;
         requestAnimationFrame(pollGamepad);
       }
 
