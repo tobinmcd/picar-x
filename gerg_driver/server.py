@@ -32,6 +32,17 @@ try:
 except ImportError:
     Picamera2 = None
 
+try:
+    import numpy as np
+    from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
+    from av import VideoFrame
+except ImportError:
+    np = None
+    RTCPeerConnection = None
+    RTCSessionDescription = None
+    VideoStreamTrack = None
+    VideoFrame = None
+
 
 # Instantiate Picarx on the Pi. On your Mac, if you run this there,
 # the mock in car_controller will be used instead.
@@ -46,6 +57,7 @@ class CameraStream:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._picam2: Picamera2 | None = None   # type: ignore
+        self._size = (640, 480)
         self.available = False
 
         if Picamera2 is None:
@@ -54,12 +66,15 @@ class CameraStream:
 
         try:
             picam2 = Picamera2()
-            config = picam2.create_video_configuration(main={"size": (640, 480)})
+            config = picam2.create_video_configuration(
+                main={"size": self._size, "format": "RGB888"},
+                buffer_count=2,
+            )
             picam2.configure(config)
             picam2.start()
             self._picam2 = picam2
             self.available = True
-            print("[CameraStream] Camera ready at 640x480.")
+            print(f"[CameraStream] Camera ready at {self._size[0]}x{self._size[1]}.")
         except Exception as exc:  # pragma: no cover - heavily hardware dependent
             print(f"[CameraStream] Failed to start camera: {exc}")
             self._picam2 = None
@@ -89,6 +104,20 @@ class CameraStream:
                 return None
             return buffer.getvalue()
 
+    def get_frame_array(self):
+        picam2 = self._picam2
+        if not self.available or picam2 is None:
+            return None
+        if np is None:
+            return None
+        with self._lock:
+            try:
+                frame = picam2.capture_array()
+            except Exception as exc:  # pragma: no cover - hardware failure path
+                print(f"[CameraStream] capture array failed: {exc}")
+                return None
+            return frame
+
     def stream(self):
         while self.available:
             frame = self.get_frame()
@@ -103,6 +132,15 @@ class CameraStream:
             yield header + frame + b"\r\n"
 
 camera_stream = CameraStream()
+
+WEBRTC_AVAILABLE = (
+    RTCPeerConnection is not None
+    and RTCSessionDescription is not None
+    and VideoStreamTrack is not None
+    and VideoFrame is not None
+    and np is not None
+)
+_peer_connections: set[RTCPeerConnection] = set()
 
 class GracefulStreamingResponse(StreamingResponse):
     async def __call__(self, scope, receive, send) -> None:
@@ -171,6 +209,67 @@ async def video_feed():
     )
 
 
+class CameraVideoTrack(VideoStreamTrack):
+    def __init__(self, camera: CameraStream) -> None:
+        super().__init__()
+        self._camera = camera
+        self._last_frame = None
+        self._fallback_frame = None
+
+    async def recv(self):
+        pts, time_base = await self.next_timestamp()
+        frame = self._camera.get_frame_array()
+        if frame is None:
+            if self._last_frame is None:
+                if self._fallback_frame is None:
+                    width, height = self._camera._size
+                    self._fallback_frame = np.zeros((height, width, 3), dtype=np.uint8)
+                frame = self._fallback_frame
+            else:
+                frame = self._last_frame
+        self._last_frame = frame
+        video_frame = VideoFrame.from_ndarray(frame, format="rgb24")
+        video_frame.pts = pts
+        video_frame.time_base = time_base
+        return video_frame
+
+
+@app.post("/webrtc/offer")
+async def webrtc_offer(payload: dict):
+    if not WEBRTC_AVAILABLE:
+        raise HTTPException(status_code=503, detail="WebRTC not available on this device")
+    if not camera_stream.available:
+        raise HTTPException(status_code=503, detail="Camera unavailable")
+
+    sdp = payload.get("sdp")
+    sdp_type = payload.get("type")
+    if not sdp or not sdp_type:
+        raise HTTPException(status_code=400, detail="Missing SDP offer")
+
+    pc = RTCPeerConnection()
+    _peer_connections.add(pc)
+
+    @pc.on("connectionstatechange")
+    def on_connectionstatechange():
+        if pc.connectionState in {"failed", "closed", "disconnected"}:
+            asyncio.create_task(_close_peer(pc))
+
+    pc.addTrack(CameraVideoTrack(camera_stream))
+
+    offer = RTCSessionDescription(sdp=sdp, type=sdp_type)
+    await pc.setRemoteDescription(offer)
+    answer = await pc.createAnswer()
+    await pc.setLocalDescription(answer)
+
+    return {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
+
+
+async def _close_peer(pc: RTCPeerConnection) -> None:
+    if pc in _peer_connections:
+        _peer_connections.discard(pc)
+    await pc.close()
+
+
 @app.websocket("/ws/keys")
 async def websocket_keys(websocket: WebSocket):
     await websocket.accept()
@@ -225,6 +324,8 @@ async def _shutdown_event() -> None:
         with suppress(asyncio.CancelledError):
             await _tick_task
         _tick_task = None
+    for pc in list(_peer_connections):
+        await _close_peer(pc)
     controller.shutdown()
     camera_stream.close()
 

@@ -11,7 +11,9 @@
       .control-button:disabled { opacity: 0.6; cursor: not-allowed; }
       .camera-container { margin-top: 1.5rem; }
       .camera-frame { background: #000; display: inline-block; border: 2px solid #222; border-radius: 8px; padding: 0.25rem; width: min(640px, 90vw); }
-      .camera-frame img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; border-radius: 4px; }
+      .camera-frame img,
+      .camera-frame video { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; border-radius: 4px; }
+      #camera-webrtc { display: none; }
       .status-line { font-size: 0.9rem; color: #444; }
     </style>
   </head>
@@ -40,6 +42,7 @@
     <div class="camera-container">
       <h2>Live camera</h2>
       <div class="camera-frame">
+        <video id="camera-webrtc" playsinline autoplay muted aria-describedby="camera-status"></video>
         <img id="camera-feed" src="/video?stream=1" alt="PiCar-X camera feed" aria-describedby="camera-status" />
       </div>
       <p id="camera-status" class="status-line">Camera: checking availability...</p>
@@ -227,13 +230,99 @@
       requestAnimationFrame(pollGamepad);
 
       const cameraStatusEl = document.getElementById("camera-status");
+      const cameraVideo = document.getElementById("camera-webrtc");
       const cameraImg = document.getElementById("camera-feed");
       let cameraStreamNonce = 0;
       let cameraStreaming = false;
+      let webrtcActive = false;
+      let webrtcPeer = null;
 
       function setCameraSrc() {
         cameraStreamNonce += 1;
         cameraImg.src = `/video?stream=${cameraStreamNonce}&_=${Date.now()}`;
+      }
+
+      function showWebrtc(stream) {
+        webrtcActive = true;
+        cameraVideo.srcObject = stream;
+        cameraVideo.style.display = "block";
+        cameraImg.style.display = "none";
+        cameraStatusEl.textContent = "Camera streaming (WebRTC)...";
+      }
+
+      function fallbackToMjpeg(message) {
+        if (webrtcPeer) {
+          webrtcPeer.close();
+          webrtcPeer = null;
+        }
+        if (message) {
+          cameraStatusEl.textContent = message;
+        }
+        cameraVideo.srcObject = null;
+        cameraVideo.style.display = "none";
+        webrtcActive = false;
+        startCameraStream();
+      }
+
+      function waitForIceGatheringComplete(peer) {
+        if (peer.iceGatheringState === "complete") {
+          return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+          function checkState() {
+            if (peer.iceGatheringState === "complete") {
+              peer.removeEventListener("icegatheringstatechange", checkState);
+              resolve();
+            }
+          }
+          peer.addEventListener("icegatheringstatechange", checkState);
+        });
+      }
+
+      async function startWebrtc() {
+        if (!window.RTCPeerConnection) {
+          throw new Error("WebRTC unsupported in this browser.");
+        }
+        const peer = new RTCPeerConnection();
+        webrtcPeer = peer;
+        peer.addTransceiver("video", { direction: "recvonly" });
+
+        const trackTimeout = setTimeout(() => {
+          if (!webrtcActive) {
+            fallbackToMjpeg("WebRTC timed out, falling back to MJPEG...");
+          }
+        }, 3000);
+
+        peer.ontrack = (event) => {
+          clearTimeout(trackTimeout);
+          showWebrtc(event.streams[0]);
+        };
+
+        peer.onconnectionstatechange = () => {
+          if (["failed", "disconnected", "closed"].includes(peer.connectionState)) {
+            if (webrtcActive) {
+              fallbackToMjpeg("WebRTC disconnected, falling back to MJPEG...");
+            }
+          }
+        };
+
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        await waitForIceGatheringComplete(peer);
+
+        const response = await fetch("/webrtc/offer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sdp: peer.localDescription.sdp,
+            type: peer.localDescription.type
+          })
+        });
+        if (!response.ok) {
+          throw new Error("WebRTC offer rejected.");
+        }
+        const answer = await response.json();
+        await peer.setRemoteDescription(answer);
       }
 
       function startCameraStream() {
@@ -249,7 +338,9 @@
             cameraImg.style.display = "block";
             cameraStreaming = false;
             setCameraSrc();
-            cameraStatusEl.textContent = "Camera streaming...";
+            if (!webrtcActive) {
+              cameraStatusEl.textContent = "Camera streaming (MJPEG)...";
+            }
           })
           .catch((error) => {
             console.error("Camera status error:", error);
@@ -261,7 +352,9 @@
 
       cameraImg.addEventListener("load", () => {
         cameraStreaming = true;
-        cameraStatusEl.textContent = "Camera streaming...";
+        if (!webrtcActive) {
+          cameraStatusEl.textContent = "Camera streaming (MJPEG)...";
+        }
       });
 
       cameraImg.addEventListener("error", () => {
@@ -270,7 +363,11 @@
         setTimeout(startCameraStream, 2000);
       });
 
-      startCameraStream();
+      startWebrtc()
+        .catch((error) => {
+          console.warn("WebRTC unavailable:", error);
+          fallbackToMjpeg("WebRTC unavailable, using MJPEG...");
+        });
     </script>
   </body>
 </html>
