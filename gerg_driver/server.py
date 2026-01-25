@@ -22,13 +22,13 @@ except OSError:
     os.getlogin = lambda: pwd.getpwuid(os.getuid()).pw_name
 
 try:
-    from car_controller import CarController, Picarx
+    from .car_controller import CarController, Picarx
 except ModuleNotFoundError:
     # Fallback when imported as part of the gerg_driver package.
     from gerg_driver.car_controller import CarController, Picarx
 
 try:
-    from picamera2 import Picamera2
+    from picamera2 import Picamera2  # type: ignore
 except ImportError:
     Picamera2 = None
 
@@ -45,7 +45,7 @@ class CameraStream:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._picam2: Picamera2 | None = None
+        self._picam2: Picamera2 | None = None   # type: ignore
         self.available = False
 
         if Picamera2 is None:

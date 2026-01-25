@@ -4,12 +4,32 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Set, Union
+from typing import Protocol, Set, TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from picarx import Picarx as HardwarePicarx
+
+
+class PicarxProtocol(Protocol):
+    def forward(self, speed: int) -> None: ...
+
+    def backward(self, speed: int) -> None: ...
+
+    def stop(self) -> None: ...
+
+    def set_dir_servo_angle(self, value: int) -> None: ...
+
+    def set_cam_tilt_angle(self, value: int) -> None: ...
+
+    def set_cam_pan_angle(self, value: int) -> None: ...
+
+
+Picarx: type[PicarxProtocol]
 
 try:
     from picarx import Picarx as HardwarePicarx
 
-    Picarx = HardwarePicarx
+    Picarx = cast(type[PicarxProtocol], HardwarePicarx)
 except ImportError:  # Running on a dev machine without hardware
 
     class MockPicarx:
@@ -31,7 +51,7 @@ except ImportError:  # Running on a dev machine without hardware
         def set_cam_pan_angle(self, angle: int):
             print(f"[mock] pan {angle}")
 
-    Picarx = MockPicarx
+    Picarx = cast(type[PicarxProtocol], MockPicarx)
 
 
 @dataclass
@@ -47,7 +67,7 @@ class CarController:
         Initialized ``Picarx`` (or the mock) that actually talks to the hardware.
     """
 
-    px: Union[HardwarePicarx, MockPicarx]
+    px: PicarxProtocol | None
 
     speed: int = 100  # tune this
     turn_angle: int = 20  # steering servo angle
@@ -150,7 +170,7 @@ class CarController:
         if not self._use_gamepad():
             self._update_camera(px)
 
-    def _require_px(self, *, log: bool = True):
+    def _require_px(self, *, log: bool = True) -> PicarxProtocol | None:
         px = self.px
         if px is None and log:
             print(f"[CarController] active_keys={self.active_keys}")
