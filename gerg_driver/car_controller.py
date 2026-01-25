@@ -71,7 +71,7 @@ class CarController:
 
     speed: int = 100  # tune this
     turn_angle: int = 20  # steering servo angle
-    camera_step: float = 0.5
+    camera_step: float = 0.8
     camera_pan_limit: int = 45
     camera_tilt_limit: int = 30
     active_keys: Set[str] = field(default_factory=set)
